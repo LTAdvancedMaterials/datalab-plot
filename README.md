@@ -16,19 +16,30 @@ single-cell deep dives, NMR / XRD / UV-Vis. Three user surfaces:
 You'll need a datalab instance URL and a personal API token. Get the token by
 signing into the instance in a browser and visiting `<DATALAB_URL>/get-api-key`.
 
-### 1 · Clone and install
+### 1 · Install
+
+Pick whichever fits — both give you the `datalab-plot` command, the Python
+library, and the GUI. Python 3.12+ required either way.
+
+**Option A — clone the repo** (recommended if you want the starter notebook
+to hand or might tweak the code):
 
 ```bash
 git clone https://github.com/ltadvancedmaterials/datalab-plot
 cd datalab-plot
-
-# Pick one. uv is fastest; pip works too.
-uv sync --extra gui --extra picker
-# or:
-pip install -e ".[gui,picker]"
+uv sync --extra gui --extra picker         # or: pip install -e ".[gui,picker]"
 ```
 
-Python 3.12+ required.
+**Option B — install without cloning** (recommended for everyone else):
+
+```bash
+pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
+# or with uv:
+uv pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
+```
+
+Optional extras: `[gui]` for the Streamlit web UI, `[picker]` for the
+ipywidgets cell-picker in Jupyter. The core package works without either.
 
 ### 2 · Launch the web UI
 
@@ -84,21 +95,6 @@ The notebook walks through URL/key setup, an interactive `pick_cells` widget,
 all four cycling plot modes, and a custom-grouping example.
 
 ---
-
-## Install without cloning
-
-For colleagues who just want to use the package as a dependency:
-
-```bash
-pip install git+https://github.com/ltadvancedmaterials/datalab-plot
-# with extras:
-pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
-```
-
-Optional extras:
-
-- `[gui]` — Streamlit + Plotly (web UI)
-- `[picker]` — ipywidgets (Jupyter cell selector)
 
 ## Configuration
 
