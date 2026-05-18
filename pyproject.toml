@@ -1,0 +1,41 @@
+[project]
+name = "datalab-plot"
+version = "0.1.0"
+description = "Plot data from a datalab instance locally in Jupyter, Python, or a Streamlit web GUI. Multi-cell echem comparisons, NMR, XRD, UV-Vis."
+requires-python = ">=3.12"
+readme = "README.md"
+keywords = ["datalab", "electrochemistry", "battery", "cycling", "nmr", "xrd"]
+authors = [{ name = "LT Advanced Materials" }]
+
+[project.urls]
+Homepage = "https://github.com/ltadvancedmaterials/datalab-plot"
+Repository = "https://github.com/ltadvancedmaterials/datalab-plot"
+Issues = "https://github.com/ltadvancedmaterials/datalab-plot/issues"
+dependencies = [
+    "datalab-api>=0.5.0",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.10.9",
+    "navani>=0.1.18",
+    "nmrglue>=0.10",
+    "numpy>=1.26.4",
+    "openpyxl>=3.1.5",
+    "pandas>=2.3.3",
+    "platformdirs>=4",
+    "pyarrow>=24.0.0",
+    "scipy>=1.13",
+    "xlrd>=2.0.2",
+]
+
+[project.optional-dependencies]
+picker = ["ipywidgets>=8"]
+gui = ["streamlit>=1.36", "plotly>=5.20"]
+
+[project.scripts]
+datalab-plot = "datalab_plot.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
