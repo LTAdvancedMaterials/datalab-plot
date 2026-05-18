@@ -34,7 +34,9 @@ uv sync --extra gui --extra picker         # or: pip install -e ".[gui,picker]"
 
 ```bash
 pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
-# or with uv:
+```
+or with uv:
+```bash
 uv pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
 ```
 
