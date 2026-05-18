@@ -13,6 +13,9 @@ single-cell deep dives, NMR / XRD / UV-Vis. Three user surfaces:
 
 ## Quickstart
 
+You'll need a datalab instance URL and a personal API token. Get the token by
+signing into the instance in a browser and visiting `<DATALAB_URL>/get-api-key`.
+
 ### 1 · Clone and install
 
 ```bash
@@ -27,34 +30,30 @@ pip install -e ".[gui,picker]"
 
 Python 3.12+ required.
 
-### 2 · Set environment variables
+### 2 · Launch the web UI
 
-You need the URL of your datalab instance and a personal API token.
-Generate the token by signing into the instance in a browser and visiting
-`<DATALAB_URL>/get-api-key`.
+```bash
+datalab-plot gui                 # opens http://localhost:8501
+```
+
+The web UI **does not require any environment variables** — the URL field is
+pre-filled to `https://datalab.lightningtree.ai/` and the API key has a
+password input in the sidebar. Paste your key → **Connect** → search for
+items (e.g. `NMC811`) → tick rows → pick a plot mode. Plot auto-updates
+as you tick / untick rows.
+
+### 3 · …or use it from Python
+
+For the Python API, CLI, and notebook, export the credentials once per shell:
 
 ```bash
 export DATALAB_URL=https://datalab.lightningtree.ai/
 export DATALAB_API_KEY=...
 ```
 
-### 3 · Launch the web UI
-
-```bash
-datalab-plot gui                 # opens http://localhost:8501
-```
-
-In the app: paste your API key in the sidebar → **Connect** → type a search
-(e.g. `NMC811`) → tick rows in the table → pick a plot mode → done. Plot
-auto-updates as you tick / untick rows.
-
-### 4 · …or use it from Python
+Then:
 
 ```python
-import os
-os.environ["DATALAB_URL"]     = "https://datalab.lightningtree.ai/"
-os.environ["DATALAB_API_KEY"] = "..."
-
 from datalab_plot import plot_cycles, find_cells, DatalabPlotClient
 
 # Browse what's on the instance
@@ -75,7 +74,7 @@ with DatalabPlotClient() as client:
     fig.savefig("comparison.png", dpi=140)
 ```
 
-### 5 · …or open the starter notebook
+### 4 · …or open the starter notebook
 
 ```bash
 jupyter lab notebooks/starter.ipynb
