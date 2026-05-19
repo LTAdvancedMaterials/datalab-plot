@@ -230,6 +230,47 @@ def _selected_payload(picker_df: pd.DataFrame) -> dict[str, dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Axis machinery for the generic XY mode.
+#
+# Each axis option resolves to (column_or_callable_for_x_y, axis_label,
+# resets_per_half_cycle?). The `resets_per_half_cycle` flag is True for any
+# column whose value is reset at half-cycle boundaries (currently just
+# `Capacity` in navani's output); when EITHER axis has that flag set, the
+# plot needs `split_half_cycles` to avoid drawing fold-back connectors.
+# ---------------------------------------------------------------------------
+
+AXIS_OPTIONS = ("time", "voltage", "capacity", "current")
+
+# Map axis key → (column name in raw df, label, resets_per_half_cycle).
+# `time` is special — it uses _cumulative_time_hours instead of a raw column.
+_AXIS_TABLE: dict[str, tuple[str, str, bool]] = {
+    "voltage":  ("Voltage",  "Voltage (V)",     False),
+    "capacity": ("Capacity", "Capacity (mAh)",  True),
+    "current":  ("Current",  "Current (mA)",    False),
+}
+
+
+def _axis_label(axis: str) -> str:
+    if axis == "time":
+        return "Time (h)"
+    return _AXIS_TABLE[axis][1]
+
+
+def _axis_resets(axis: str) -> bool:
+    if axis == "time":
+        return False
+    return _AXIS_TABLE[axis][2]
+
+
+def _axis_series(df: pd.DataFrame, axis: str) -> pd.Series:
+    """Return the series for the named axis from a navani DataFrame."""
+    if axis == "time":
+        return _cumulative_time_hours(df)
+    col = _AXIS_TABLE[axis][0]
+    return df[col]
+
+
+# ---------------------------------------------------------------------------
 # Plotly figure builders. Each takes the same payload+raw_data shape so a
 # single dispatch can serve both Plot-click and live-update reruns.
 # ---------------------------------------------------------------------------
@@ -394,6 +435,107 @@ def _plotly_voltage_time(items, raw, colors, height) -> go.Figure:
     return _layout(fig, height, title="Voltage vs time")
 
 
+def _axis_col_in(df: pd.DataFrame, axis: str) -> tuple[pd.DataFrame, str]:
+    """Return ``(df_with_axis_as_column, column_name)``.
+
+    For ``axis="time"`` writes a ``_time_h`` column derived via
+    ``_cumulative_time_hours``; for the others returns the existing column
+    name. The returned DataFrame may be a shallow copy when a column has
+    to be added.
+    """
+    if axis == "time":
+        if "_time_h" not in df.columns:
+            df = df.copy()
+            df["_time_h"] = _cumulative_time_hours(df).to_numpy()
+        return df, "_time_h"
+    return df, _AXIS_TABLE[axis][0]
+
+
+def _plotly_xy(items, raw, colors, x_axis, y_axis, y2_axis, height) -> go.Figure:
+    """Generic X-Y plot with axes chosen from AXIS_OPTIONS.
+
+    When either Y axis is set, the figure uses a secondary right-hand axis.
+    When any axis is a half-cycle-resetting column (Capacity), uses
+    `split_half_cycles` to insert NaN gaps so traces don't draw fold-back
+    connectors at half-cycle boundaries.
+    """
+    has_y2 = y2_axis and y2_axis != "none"
+    needs_gaps = (
+        _axis_resets(x_axis)
+        or _axis_resets(y_axis)
+        or (has_y2 and _axis_resets(y2_axis))
+    )
+    xlabel = _axis_label(x_axis)
+    ylabel = _axis_label(y_axis)
+    y2label = _axis_label(y2_axis) if has_y2 else None
+
+    fig = (
+        make_subplots(specs=[[{"secondary_y": True}]])
+        if has_y2 else go.Figure()
+    )
+
+    def _trace_for(label, df, axis, color, dash, secondary):
+        if needs_gaps:
+            tmp, x_col = _axis_col_in(df, x_axis)
+            tmp, axis_col = _axis_col_in(tmp, axis)
+            xs, ys = split_half_cycles(tmp, x_col, axis_col)
+        else:
+            xs = _axis_series(df, x_axis)
+            ys = _axis_series(df, axis)
+        # Plotly's subplot wrapper around Scattergl can be flaky when mixed
+        # with secondary_y; use Scatter when we need secondary_y for safety.
+        cls = go.Scatter if has_y2 else go.Scattergl
+        kwargs = dict(
+            x=xs, y=ys, mode="lines",
+            line=dict(color=color, width=1.0, dash=dash),
+            connectgaps=False,
+            legendgroup=label,
+        )
+        if has_y2:
+            kwargs["name"] = f"{label} ({'right' if secondary else 'left'})"
+            kwargs["showlegend"] = not secondary  # one legend entry per cell
+            kwargs["hovertemplate"] = (
+                f"<b>{label}</b><br>"
+                "%{x:.3f}<br>"
+                "%{y:.3f} "
+                + (y2label if secondary else ylabel).split("(")[-1].rstrip(")")
+                + "<extra></extra>"
+            )
+            fig.add_trace(cls(**kwargs), secondary_y=secondary)
+        else:
+            kwargs["name"] = label
+            kwargs["hovertemplate"] = (
+                f"%{{x:.3f}} {xlabel.split('(')[-1].rstrip(')')}"
+                f"<br>%{{y:.3f}} {ylabel.split('(')[-1].rstrip(')')}"
+                "<extra>%{fullData.name}</extra>"
+            )
+            fig.add_trace(cls(**kwargs))
+
+    for it in items:
+        label = it["label"]
+        if label not in raw:
+            continue
+        df = raw[label]
+        color = _rgba_to_css(colors[label])
+        _trace_for(label, df, y_axis, color, "solid", False)
+        if has_y2:
+            _trace_for(label, df, y2_axis, color, "dash", True)
+
+    if has_y2:
+        fig.update_xaxes(title_text=xlabel)
+        fig.update_yaxes(title_text=ylabel, secondary_y=False)
+        fig.update_yaxes(title_text=y2label, secondary_y=True)
+        ytitle = ylabel.split(" (")[0]
+        y2title = y2label.split(" (")[0]
+        xtitle = xlabel.split(" (")[0]
+        title_text = f"{ytitle} & {y2title} vs {xtitle}"
+    else:
+        fig.update_xaxes(title_text=xlabel)
+        fig.update_yaxes(title_text=ylabel)
+        title_text = f"{ylabel.split(' (')[0]} vs {xlabel.split(' (')[0]}"
+    return _layout(fig, height, title=title_text)
+
+
 def _build_plotly(
     payload: dict[str, dict[str, Any]],
     raw: dict[str, pd.DataFrame],
@@ -401,6 +543,9 @@ def _build_plotly(
     cycle: int | None,
     title: str | None,
     height: int,
+    x_axis: str = "time",
+    y_axis: str = "voltage",
+    y2_axis: str = "none",
 ) -> go.Figure:
     items = _normalise_items(payload)
     colors = _assign_colors(items)
@@ -411,7 +556,11 @@ def _build_plotly(
     elif mode == "dqdv":
         fig = _plotly_dqdv(items, raw, colors, int(cycle or 1), height)
     elif mode == "voltage_time":
+        # Kept for backwards compatibility (cached figures, library parity).
+        # In the GUI, V vs t is reached via mode="xy" with x=time, y=voltage.
         fig = _plotly_voltage_time(items, raw, colors, height)
+    elif mode == "xy":
+        fig = _plotly_xy(items, raw, colors, x_axis, y_axis, y2_axis, height)
     else:
         raise ValueError(f"Unknown mode {mode!r}")
     if title:
@@ -532,7 +681,12 @@ def _sidebar_connection() -> DatalabPlotClient | None:
                     if k.startswith(f"{PICKER_KEY_BASE}_v") or k in (
                         "client", "server_name", "results", "picker_initial",
                         "picker_version", "picker_last_edited",
-                        "raw_data", "last_plot", "broken_items",
+                        "raw_data", "last_plot", "last_fig",
+                        "last_plot_signature", "broken_items",
+                        "ui_preset", "ui_mode",
+                        "ui_x_axis", "ui_y_axis", "ui_y2_axis",
+                        "ui_cycle", "ui_title", "ui_live",
+                        "ui_plot_width", "ui_plot_height",
                     ):
                         st.session_state.pop(k, None)
                 st.rerun()
@@ -651,52 +805,155 @@ def _picker_table() -> pd.DataFrame:
     return edited
 
 
-def _plot_bar() -> tuple[str, int | None, str, bool, bool, bool]:
-    cols = st.columns([2, 1, 3, 1, 1, 1])
-    mode = cols[0].selectbox(
-        "Mode",
-        ["voltage_time", "summary", "voltage_capacity", "dqdv"],
-        key="ui_mode",
+# --- Presets ---------------------------------------------------------------
+# A single-select segmented control drives the plot mode + axes. The
+# `on_change` callback writes ui_mode / ui_x_axis / ui_y_axis / ui_y2_axis
+# according to PRESET_MAP. Writing to those session_state slots is allowed
+# because they are *not* widget-owned reserved keys.
+
+PRESET_OPTIONS = (
+    "V vs t", "V vs Q", "I vs t", "Q vs t", "V & I vs t",
+    "dQ/dV", "Summary", "Custom",
+)
+
+# Each entry: (mode, x_axis, y_axis, y2_axis). None means "leave current value".
+PRESET_MAP: dict[str, tuple[str, str | None, str | None, str | None]] = {
+    "V vs t":     ("xy",                "time", "voltage",  "none"),
+    "V vs Q":     ("voltage_capacity",  None,   None,       None),
+    "I vs t":     ("xy",                "time", "current",  "none"),
+    "Q vs t":     ("xy",                "time", "capacity", "none"),
+    "V & I vs t": ("xy",                "time", "voltage",  "current"),
+    "dQ/dV":      ("dqdv",              None,   None,       None),
+    "Summary":    ("summary",           None,   None,       None),
+    # Custom: switch to xy but don't overwrite the user's current axes.
+    "Custom":     ("xy",                None,   None,       None),
+}
+
+
+def _apply_preset(preset: str) -> None:
+    mode, x, y, y2 = PRESET_MAP[preset]
+    st.session_state["ui_mode"] = mode
+    if x is not None:
+        st.session_state["ui_x_axis"] = x
+    if y is not None:
+        st.session_state["ui_y_axis"] = y
+    if y2 is not None:
+        st.session_state["ui_y2_axis"] = y2
+
+
+def _on_preset_change() -> None:
+    preset = st.session_state.get("ui_preset")
+    if preset in PRESET_MAP:
+        _apply_preset(preset)
+
+
+def _on_customize_edit() -> None:
+    """User touched a widget inside the Customize expander → fall out of any
+    named preset and switch to Custom."""
+    st.session_state["ui_preset"] = "Custom"
+
+
+Y2_OPTIONS = ("none", "time", "voltage", "capacity", "current")
+
+
+def _plot_bar() -> tuple[str, str, str, str, int | None, str, bool, bool, float, int]:
+    # Seed defaults the first time these widgets render.
+    st.session_state.setdefault("ui_preset", "V vs t")
+    st.session_state.setdefault("ui_mode", "xy")
+    st.session_state.setdefault("ui_x_axis", "time")
+    st.session_state.setdefault("ui_y_axis", "voltage")
+    st.session_state.setdefault("ui_y2_axis", "none")
+
+    # Preset segmented control — single visible row, single source of truth
+    # for the named-view selection.
+    st.segmented_control(
+        "Plot type",
+        options=list(PRESET_OPTIONS),
+        key="ui_preset",
+        on_change=_on_preset_change,
+        label_visibility="collapsed",
     )
-    cycle = (
-        int(cols[1].number_input("Cycle", min_value=1, step=1, value=1, key="ui_cycle"))
-        if mode == "dqdv"
-        else None
-    )
-    if mode != "dqdv":
-        cols[1].empty()
-    title = cols[2].text_input("Title (optional)", value="", key="ui_title")
-    plot_click = cols[3].button(
-        "Plot", type="primary", use_container_width=True,
-        help="Render the plot from currently-selected cells.",
-    )
-    refresh_click = cols[4].button(
+
+    mode = st.session_state["ui_mode"]
+    is_xy = mode == "xy"
+
+    # Cycle stays inline directly under the preset row, but only when the
+    # active mode actually uses it.
+    cycle: int | None = None
+    if mode == "dqdv":
+        cycle = int(
+            st.number_input(
+                "Cycle", min_value=1, step=1,
+                value=st.session_state.get("ui_cycle", 1),
+                key="ui_cycle",
+                on_change=_on_customize_edit,
+            )
+        )
+
+    # Customize: axes, title, manual mode override.
+    with st.expander("Customize axes & title", expanded=False):
+        cols = st.columns([1.2, 1, 1, 1, 3])
+        cols[0].selectbox(
+            "Mode",
+            ["xy", "voltage_capacity", "dqdv", "summary"],
+            key="ui_mode",
+            on_change=_on_customize_edit,
+        )
+        cols[1].selectbox(
+            "X", AXIS_OPTIONS,
+            key="ui_x_axis",
+            disabled=not is_xy,
+            on_change=_on_customize_edit,
+        )
+        cols[2].selectbox(
+            "Y (left)", AXIS_OPTIONS,
+            key="ui_y_axis",
+            disabled=not is_xy,
+            on_change=_on_customize_edit,
+        )
+        cols[3].selectbox(
+            "Y₂ (right)", Y2_OPTIONS,
+            key="ui_y2_axis",
+            disabled=not is_xy,
+            help="Pick 'none' for a single Y axis; pick any column to overlay it on the right.",
+            on_change=_on_customize_edit,
+        )
+        title = cols[4].text_input("Title (optional)", value="", key="ui_title")
+
+    # Layout: width + height sliders, tucked out of the way.
+    with st.expander("Plot layout", expanded=False):
+        lcols = st.columns(2)
+        width_pct = lcols[0].slider(
+            "Plot width", min_value=40, max_value=100,
+            value=st.session_state.get("ui_plot_width", 90),
+            step=5, format="%d%%", key="ui_plot_width",
+        )
+        height_px = lcols[1].slider(
+            "Plot height (px)", min_value=320, max_value=900,
+            value=st.session_state.get("ui_plot_height", 520),
+            step=20, key="ui_plot_height",
+        )
+
+    # Compact action row. Refresh = "re-download from server & render".
+    action = st.columns([1, 1, 6])
+    refresh_click = action[0].button(
         "Refresh", use_container_width=True,
         help="Purge local cache for selected items and re-fetch from the server.",
     )
-    live = cols[5].toggle(
-        "Live",
-        value=st.session_state.get("ui_live", False),
-        help=(
-            "When on, the plot re-renders on every selection change. "
-            "Off by default — clicking checkboxes is snappy and you Plot when ready."
-        ),
+    live = action[1].toggle(
+        "Auto-refresh",
+        value=st.session_state.get("ui_live", True),
+        help="Re-render the plot on every selection / preset change.",
         key="ui_live",
     )
-    return mode, cycle, title, plot_click, refresh_click, live
 
-
-def _plot_size_controls() -> tuple[float, int]:
-    cols = st.columns([2, 2, 4])
-    width_pct = cols[0].slider(
-        "Plot width", min_value=40, max_value=100, value=st.session_state.get("ui_plot_width", 90),
-        step=5, format="%d%%", key="ui_plot_width",
+    x_axis = st.session_state["ui_x_axis"]
+    y_axis = st.session_state["ui_y_axis"]
+    y2_axis = st.session_state["ui_y2_axis"]
+    return (
+        mode, x_axis, y_axis, y2_axis, cycle, title,
+        refresh_click, live, width_pct / 100.0, height_px,
     )
-    height_px = cols[1].slider(
-        "Plot height (px)", min_value=320, max_value=900,
-        value=st.session_state.get("ui_plot_height", 520), step=20, key="ui_plot_height",
-    )
-    return width_pct / 100.0, height_px
 
 
 def _render_plot(
@@ -708,6 +965,9 @@ def _render_plot(
     width_frac: float,
     height_px: int,
     *,
+    x_axis: str = "time",
+    y_axis: str = "voltage",
+    y2_axis: str = "none",
     force_refresh: bool,
 ) -> None:
     if not payload:
@@ -750,7 +1010,10 @@ def _render_plot(
 
     raw_by_label = _raw_keyed_by_label(payload)
     try:
-        fig = _build_plotly(payload, raw_by_label, mode, cycle, title or None, height_px)
+        fig = _build_plotly(
+            payload, raw_by_label, mode, cycle, title or None, height_px,
+            x_axis=x_axis, y_axis=y_axis, y2_axis=y2_axis,
+        )
     except Exception as exc:
         st.error(f"Plot failed: {exc}")
         return
@@ -760,6 +1023,7 @@ def _render_plot(
     st.session_state["last_fig"] = fig
     st.session_state["last_plot"] = {
         "payload": payload, "mode": mode, "cycle": cycle, "title": title,
+        "x_axis": x_axis, "y_axis": y_axis, "y2_axis": y2_axis,
         "width_frac": width_frac, "height_px": height_px,
         "hits": hits, "misses": misses,
     }
@@ -804,6 +1068,53 @@ def _render_cached_figure() -> None:
         )
 
 
+def _mpl_xy_figure(payload, raw, x_axis: str, y_axis: str, y2_axis: str, title: str | None):
+    """Static matplotlib fallback for the generic XY mode (PNG export)."""
+    import matplotlib.pyplot as plt
+    items = _normalise_items(payload)
+    colors = _assign_colors(items)
+    xlabel, ylabel = _axis_label(x_axis), _axis_label(y_axis)
+    has_y2 = y2_axis and y2_axis != "none"
+    y2label = _axis_label(y2_axis) if has_y2 else None
+    needs_gaps = (
+        _axis_resets(x_axis)
+        or _axis_resets(y_axis)
+        or (has_y2 and _axis_resets(y2_axis))
+    )
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax2 = ax.twinx() if has_y2 else None
+
+    def _xy_for(df, axis):
+        if needs_gaps:
+            tmp, x_col = _axis_col_in(df, x_axis)
+            tmp, axis_col = _axis_col_in(tmp, axis)
+            return split_half_cycles(tmp, x_col, axis_col)
+        return _axis_series(df, x_axis), _axis_series(df, axis)
+
+    for it in items:
+        label = it["label"]
+        if label not in raw:
+            continue
+        df = raw[label]
+        x, y = _xy_for(df, y_axis)
+        ax.plot(x, y, color=colors[label], lw=1.0, label=label)
+        if has_y2:
+            x2, y2 = _xy_for(df, y2_axis)
+            ax2.plot(x2, y2, color=colors[label], lw=1.0, ls="--")
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.grid(alpha=0.3)
+    if has_y2:
+        ax2.set_ylabel(y2label)
+    ax.legend(fontsize=8, loc="best")
+    if title:
+        ax.set_title(title)
+    fig.tight_layout()
+    return fig
+
+
 def _png_export_section(client: DatalabPlotClient) -> None:
     cfg = st.session_state.get("last_plot")
     if not cfg:
@@ -812,10 +1123,22 @@ def _png_export_section(client: DatalabPlotClient) -> None:
         if st.button("Generate PNG", key="png_btn"):
             try:
                 with st.spinner("Rendering PNG via matplotlib…"):
-                    mpl_fig = plot_cycles(
-                        cfg["payload"], mode=cfg["mode"], cycle=cfg.get("cycle"),
-                        client=client, title=cfg.get("title") or None,
-                    )
+                    if cfg["mode"] == "xy":
+                        # plot_cycles has no xy mode; build matplotlib locally
+                        # from the in-memory parsed data.
+                        raw_by_label = _raw_keyed_by_label(cfg["payload"])
+                        mpl_fig = _mpl_xy_figure(
+                            cfg["payload"], raw_by_label,
+                            cfg.get("x_axis", "time"),
+                            cfg.get("y_axis", "voltage"),
+                            cfg.get("y2_axis", "none"),
+                            cfg.get("title") or None,
+                        )
+                    else:
+                        mpl_fig = plot_cycles(
+                            cfg["payload"], mode=cfg["mode"], cycle=cfg.get("cycle"),
+                            client=client, title=cfg.get("title") or None,
+                        )
                 st.download_button(
                     "Download PNG",
                     data=_fig_to_png_bytes(mpl_fig),
@@ -838,43 +1161,45 @@ def main() -> None:
 
     _search_section(client)
     picker_df = _picker_table()
-    mode, cycle, title, plot_click, refresh_click, live = _plot_bar()
-    width_frac, height_px = _plot_size_controls()
+    (
+        mode, x_axis, y_axis, y2_axis, cycle, title,
+        refresh_click, live, width_frac, height_px,
+    ) = _plot_bar()
 
     payload = _selected_payload(picker_df)
 
     # Detect whether the live-mode plot inputs changed since the last render —
-    # if not, skip the rebuild even with Live on. This keeps checkbox toggles
-    # snappy in Live mode when only e.g. the title or width slider moves.
+    # if not, skip the rebuild even with Auto on. This keeps checkbox toggles
+    # snappy when only e.g. the title or width slider moves.
     plot_signature = (
         tuple(sorted((k, v.get("item_id"), v.get("group"), v.get("color"))
                      for k, v in payload.items())),
-        mode, cycle, title, width_frac, height_px,
+        mode, x_axis, y_axis, y2_axis, cycle, title, width_frac, height_px,
     )
     selection_changed = (
         plot_signature != st.session_state.get("last_plot_signature")
     )
 
     should_render = (
-        plot_click
-        or refresh_click
+        refresh_click
         or (live and selection_changed and payload)
     )
 
     if should_render:
         _render_plot(
             client, payload, mode, cycle, title, width_frac, height_px,
+            x_axis=x_axis, y_axis=y_axis, y2_axis=y2_axis,
             force_refresh=refresh_click,
         )
         st.session_state["last_plot_signature"] = plot_signature
 
     # Always re-display the cached figure (kept stable by key="main_plot"),
-    # so checkbox toggles in non-Live mode don't blank the plot.
+    # so checkbox toggles when Auto-refresh is off don't blank the plot.
     if "last_fig" in st.session_state:
         _render_cached_figure()
         _png_export_section(client)
     elif payload:
-        st.caption("Click **Plot** to render the selected cells.")
+        st.caption("Tick rows and pick a plot type — the figure renders automatically.")
     else:
         st.caption("Tick rows in the picker, then click **Plot**.")
 
