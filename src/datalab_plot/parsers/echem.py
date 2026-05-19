@@ -199,6 +199,59 @@ def split_half_cycles(
     return np.asarray(xs), np.asarray(ys)
 
 
+STATUS_COLUMN_CANDIDATES = ("Status", "status", "Step_Type", "state")
+
+
+def detect_status_column(df: pd.DataFrame) -> str | None:
+    """Return the first status-like column in ``df`` with more than one
+    distinct value, or ``None`` if no usable column exists.
+
+    Preference order matches the richness of the labels:
+
+    * ``Status`` — Neware's native step-type strings (``CC_Chg``, ``CV_Chg``,
+      ``Rest``, …).
+    * ``Step_Type`` — Lanndt's analogous column.
+    * ``state`` — navani's standardised column (``R`` / 0 / 1 / "unknown").
+    """
+    for col in STATUS_COLUMN_CANDIDATES:
+        if col in df.columns and df[col].astype(str).nunique() > 1:
+            return col
+    return None
+
+
+def split_by_status(
+    df: pd.DataFrame, x_col: str, y_col: str, status_col: str
+) -> list[tuple[np.ndarray, np.ndarray, str]]:
+    """Split a DataFrame into contiguous runs of equal ``status_col`` value.
+
+    Returns a list of ``(x_arr, y_arr, status_str)`` triples in time order.
+    Each run includes a copy of the previous run's final point as its first
+    point, so a downstream renderer plots one trace per run and adjacent
+    runs touch at the colour transition (no visual gap).
+    """
+    if df.empty or status_col not in df.columns:
+        return []
+    df = df.reset_index(drop=True)
+    status_str = df[status_col].astype(str)
+    run_ids = (status_str != status_str.shift()).cumsum()
+    runs: list[tuple[np.ndarray, np.ndarray, str]] = []
+    prev_last_x: float | None = None
+    prev_last_y: float | None = None
+    for _, run_df in df.groupby(run_ids, sort=False):
+        if run_df.empty:
+            continue
+        xs = run_df[x_col].to_numpy()
+        ys = run_df[y_col].to_numpy()
+        sval = str(run_df[status_col].iloc[0])
+        if prev_last_x is not None:
+            xs = np.concatenate(([prev_last_x], xs))
+            ys = np.concatenate(([prev_last_y], ys))
+        runs.append((xs, ys, sval))
+        prev_last_x = run_df[x_col].iloc[-1]
+        prev_last_y = run_df[y_col].iloc[-1]
+    return runs
+
+
 def compute_dqdv(
     df: pd.DataFrame,
     *,

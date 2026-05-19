@@ -18,9 +18,11 @@ from datalab_plot.client import DatalabPlotClient  # noqa: E402
 from datalab_plot.parsers.echem import (  # noqa: E402
     compute_dqdv,
     cycle_summary,
+    detect_status_column,
     filter_by_cycle,
     is_cycling_file,
     load_echem,
+    split_by_status,
     split_half_cycles,
 )
 from datalab_plot.plots.echem import (  # noqa: E402
@@ -34,6 +36,38 @@ from datalab_plot.search import find_cells  # noqa: E402
 
 DEFAULT_URL = "https://datalab.lightningtree.ai/"
 PICKER_COLUMNS = ("Select", "item_id", "name", "chemform", "label", "group", "color")
+
+# Common cycler step-type / state values mapped to colours. Anything not in
+# the map falls back to a deterministic hash-based tab20 colour, so unknown
+# statuses still render distinguishably.
+STATUS_COLOR_MAP: dict[str, str] = {
+    "CC_Chg":    "#e63946",
+    "CV_Chg":    "#f1a208",
+    "CCCV_Chg":  "#d62728",
+    "CC Chg":    "#e63946",
+    "CC_DChg":   "#1f77b4",
+    "CV_DChg":   "#56b4e9",
+    "CCCV_DChg": "#1a5fb4",
+    "CC DChg":   "#1f77b4",
+    "Rest":      "#9aa0a6",
+    "rest":      "#9aa0a6",
+    "R":         "#9aa0a6",
+    "Pause":     "#cfd2d6",
+    "0":         "#e63946",   # navani: charge
+    "1":         "#1f77b4",   # navani: discharge
+    "unknown":   "#cccccc",
+}
+
+
+def _status_color(status: str) -> str:
+    """Stable colour for a status string. Known ones get a hand-picked hue;
+    unknowns fall through to tab20 via a hash so they stay distinguishable."""
+    if status in STATUS_COLOR_MAP:
+        return STATUS_COLOR_MAP[status]
+    import matplotlib.pyplot as _plt
+    cmap = _plt.colormaps["tab20"]
+    idx = (hash(status) % 20) / 19.0
+    return _rgba_to_css(cmap(idx))
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +321,7 @@ def _layout(fig: go.Figure, height: int, title: str | None = None) -> go.Figure:
     return fig
 
 
-def _plotly_summary(items, raw, colors, height) -> go.Figure:
+def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0) -> go.Figure:
     fig = make_subplots(
         rows=1,
         cols=2,
@@ -303,7 +337,7 @@ def _plotly_summary(items, raw, colors, height) -> go.Figure:
             go.Scatter(
                 x=summ["cycle"], y=summ["Discharge_mAh"],
                 mode="lines", name=label,
-                line=dict(color=color, width=1.6),
+                line=dict(color=color, width=1.6 * width_scale),
                 legendgroup=label,
                 hovertemplate="cycle %{x}<br>%{y:.1f} mAh<extra>%{fullData.name}</extra>",
             ),
@@ -313,7 +347,7 @@ def _plotly_summary(items, raw, colors, height) -> go.Figure:
             go.Scatter(
                 x=summ["cycle"], y=100 * summ["CE"],
                 mode="lines", name=label,
-                line=dict(color=color, width=1.6),
+                line=dict(color=color, width=1.6 * width_scale),
                 legendgroup=label, showlegend=False,
                 hovertemplate="cycle %{x}<br>%{y:.2f}%<extra>%{fullData.name}</extra>",
             ),
@@ -331,7 +365,7 @@ def _plotly_summary(items, raw, colors, height) -> go.Figure:
 PER_CELL_CMAPS = ("viridis", "plasma", "inferno", "magma", "cividis")
 
 
-def _plotly_voltage_capacity(items, raw, colors, height) -> go.Figure:
+def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.0) -> go.Figure:
     """V-Q for every cycle of every cell. Each cell gets its own perceptually
     uniform colormap; cycles are coloured along that gradient (early = light,
     late = dark for viridis-family). The `colors` param is unused here.
@@ -361,7 +395,7 @@ def _plotly_voltage_capacity(items, raw, colors, height) -> go.Figure:
             go.Scatter(
                 x=[None], y=[None], mode="lines",
                 name=f"{label}  ({cmap_name})",
-                line=dict(color=legend_color, width=3),
+                line=dict(color=legend_color, width=3 * width_scale),
                 legendgroup=label, showlegend=True,
             )
         )
@@ -374,7 +408,7 @@ def _plotly_voltage_capacity(items, raw, colors, height) -> go.Figure:
             fig.add_trace(
                 go.Scattergl(
                     x=x, y=y, mode="lines",
-                    line=dict(color=color, width=1.0),
+                    line=dict(color=color, width=1.0 * width_scale),
                     legendgroup=label, showlegend=False,
                     hovertemplate=(
                         f"<b>{label}</b> · cycle {cid}<br>"
@@ -388,7 +422,7 @@ def _plotly_voltage_capacity(items, raw, colors, height) -> go.Figure:
     return _layout(fig, height, title="Voltage vs capacity, all cycles")
 
 
-def _plotly_dqdv(items, raw, colors, cycle, height) -> go.Figure:
+def _plotly_dqdv(items, raw, colors, cycle, height, width_scale: float = 1.0) -> go.Figure:
     fig = go.Figure()
     for it in items:
         label = it["label"]
@@ -405,7 +439,7 @@ def _plotly_dqdv(items, raw, colors, cycle, height) -> go.Figure:
             go.Scatter(
                 x=x, y=y,
                 mode="lines", name=label, connectgaps=False,
-                line=dict(color=_rgba_to_css(colors[label]), width=1.4),
+                line=dict(color=_rgba_to_css(colors[label]), width=1.4 * width_scale),
                 hovertemplate="%{x:.3f} V<br>%{y:.2f} mA/V<extra>%{fullData.name}</extra>",
             )
         )
@@ -414,7 +448,7 @@ def _plotly_dqdv(items, raw, colors, cycle, height) -> go.Figure:
     return _layout(fig, height, title=f"dQ/dV, cycle {cycle}")
 
 
-def _plotly_voltage_time(items, raw, colors, height) -> go.Figure:
+def _plotly_voltage_time(items, raw, colors, height, width_scale: float = 1.0) -> go.Figure:
     fig = go.Figure()
     for it in items:
         label = it["label"]
@@ -426,7 +460,7 @@ def _plotly_voltage_time(items, raw, colors, height) -> go.Figure:
             go.Scatter(
                 x=t, y=df["Voltage"],
                 mode="lines", name=label,
-                line=dict(color=_rgba_to_css(colors[label]), width=1.0),
+                line=dict(color=_rgba_to_css(colors[label]), width=1.0 * width_scale),
                 hovertemplate="%{x:.2f} h<br>%{y:.3f} V<extra>%{fullData.name}</extra>",
             )
         )
@@ -451,13 +485,28 @@ def _axis_col_in(df: pd.DataFrame, axis: str) -> tuple[pd.DataFrame, str]:
     return df, _AXIS_TABLE[axis][0]
 
 
-def _plotly_xy(items, raw, colors, x_axis, y_axis, y2_axis, height) -> go.Figure:
+def _plotly_xy(
+    items, raw, colors,
+    x_axis: str, y_axis: str, y2_axis: str, height: int,
+    color_by_status: bool = False,
+    width_scale: float = 1.0,
+) -> go.Figure:
     """Generic X-Y plot with axes chosen from AXIS_OPTIONS.
 
-    When either Y axis is set, the figure uses a secondary right-hand axis.
-    When any axis is a half-cycle-resetting column (Capacity), uses
-    `split_half_cycles` to insert NaN gaps so traces don't draw fold-back
-    connectors at half-cycle boundaries.
+    * If ``color_by_status`` is True, the Y axis is split into per-step
+      segments coloured by status (``CC_Chg``, ``CV_Chg``, ``Rest``, …).
+    * If ``y2_axis != "none"`` the figure adds a secondary right-hand axis;
+      its trace is always cell-coloured + dashed (regardless of
+      ``color_by_status``), so the right axis remains readable when the
+      left is fragmented by status.
+    * The two options compose: status-coloured Y on the left, cell-coloured
+      dashed Y2 on the right.
+
+    Half-cycle NaN gaps are applied to the Y2 / non-status Y traces when
+    any axis is a half-cycle-resetting column (Capacity). Status-coloured
+    traces inherently break at each transition, so they don't need the gap.
+
+    ``width_scale`` multiplies every line width.
     """
     has_y2 = y2_axis and y2_axis != "none"
     needs_gaps = (
@@ -473,66 +522,137 @@ def _plotly_xy(items, raw, colors, x_axis, y_axis, y2_axis, height) -> go.Figure
         make_subplots(specs=[[{"secondary_y": True}]])
         if has_y2 else go.Figure()
     )
+    # Use go.Scatter (not Scattergl) when secondary_y is in play; the GL
+    # path occasionally mis-renders against secondary axes in plotly.
+    cls = go.Scatter if has_y2 else go.Scattergl
+    base_w = 1.0 * width_scale
 
-    def _trace_for(label, df, axis, color, dash, secondary):
-        if needs_gaps:
+    def _add(trace_kwargs, secondary=False):
+        if has_y2:
+            fig.add_trace(cls(**trace_kwargs), secondary_y=secondary)
+        else:
+            fig.add_trace(cls(**trace_kwargs))
+
+    # --- Primary Y axis ----------------------------------------------------
+    if color_by_status:
+        seen_status: set[str] = set()
+        for it in items:
+            label = it["label"]
+            if label not in raw:
+                continue
+            df = raw[label]
             tmp, x_col = _axis_col_in(df, x_axis)
-            tmp, axis_col = _axis_col_in(tmp, axis)
-            xs, ys = split_half_cycles(tmp, x_col, axis_col)
-        else:
-            xs = _axis_series(df, x_axis)
-            ys = _axis_series(df, axis)
-        # Plotly's subplot wrapper around Scattergl can be flaky when mixed
-        # with secondary_y; use Scatter when we need secondary_y for safety.
-        cls = go.Scatter if has_y2 else go.Scattergl
-        kwargs = dict(
-            x=xs, y=ys, mode="lines",
-            line=dict(color=color, width=1.0, dash=dash),
-            connectgaps=False,
-            legendgroup=label,
-        )
-        if has_y2:
-            kwargs["name"] = f"{label} ({'right' if secondary else 'left'})"
-            kwargs["showlegend"] = not secondary  # one legend entry per cell
-            kwargs["hovertemplate"] = (
-                f"<b>{label}</b><br>"
-                "%{x:.3f}<br>"
-                "%{y:.3f} "
-                + (y2label if secondary else ylabel).split("(")[-1].rstrip(")")
-                + "<extra></extra>"
-            )
-            fig.add_trace(cls(**kwargs), secondary_y=secondary)
-        else:
-            kwargs["name"] = label
-            kwargs["hovertemplate"] = (
-                f"%{{x:.3f}} {xlabel.split('(')[-1].rstrip(')')}"
-                f"<br>%{{y:.3f}} {ylabel.split('(')[-1].rstrip(')')}"
-                "<extra>%{fullData.name}</extra>"
-            )
-            fig.add_trace(cls(**kwargs))
+            tmp, axis_col = _axis_col_in(tmp, y_axis)
+            status_col = detect_status_column(df)
+            if status_col is None:
+                xs, ys = (
+                    split_half_cycles(tmp, x_col, axis_col)
+                    if needs_gaps else
+                    (tmp[x_col].to_numpy(), tmp[axis_col].to_numpy())
+                )
+                _add(dict(
+                    x=xs, y=ys, mode="lines",
+                    name=f"{label} (no status)",
+                    line=dict(color="#777", width=base_w),
+                    connectgaps=False,
+                    hovertemplate=(
+                        f"<b>{label}</b><br>"
+                        "%{x:.3f}<br>%{y:.3f}<extra></extra>"
+                    ),
+                ), secondary=False)
+                continue
+            for xs, ys, sval in split_by_status(tmp, x_col, axis_col, status_col):
+                show = sval not in seen_status
+                seen_status.add(sval)
+                _add(dict(
+                    x=xs, y=ys, mode="lines",
+                    name=sval,
+                    line=dict(color=_status_color(sval), width=base_w),
+                    legendgroup=sval,
+                    showlegend=show,
+                    hovertemplate=(
+                        f"<b>{label}</b> · {sval}<br>"
+                        "%{x:.3f}<br>%{y:.3f}<extra></extra>"
+                    ),
+                ), secondary=False)
+    else:
+        for it in items:
+            label = it["label"]
+            if label not in raw:
+                continue
+            df = raw[label]
+            if needs_gaps:
+                tmp, x_col = _axis_col_in(df, x_axis)
+                tmp, axis_col = _axis_col_in(tmp, y_axis)
+                xs, ys = split_half_cycles(tmp, x_col, axis_col)
+            else:
+                xs = _axis_series(df, x_axis)
+                ys = _axis_series(df, y_axis)
+            cell_color = _rgba_to_css(colors[label])
+            _add(dict(
+                x=xs, y=ys, mode="lines",
+                name=(f"{label} (left)" if has_y2 else label),
+                line=dict(color=cell_color, width=base_w, dash="solid"),
+                connectgaps=False,
+                legendgroup=label,
+                showlegend=True,
+                hovertemplate=(
+                    f"<b>{label}</b><br>"
+                    "%{x:.3f}<br>"
+                    f"%{{y:.3f}} {ylabel.split('(')[-1].rstrip(')')}"
+                    "<extra></extra>"
+                ),
+            ), secondary=False)
 
-    for it in items:
-        label = it["label"]
-        if label not in raw:
-            continue
-        df = raw[label]
-        color = _rgba_to_css(colors[label])
-        _trace_for(label, df, y_axis, color, "solid", False)
-        if has_y2:
-            _trace_for(label, df, y2_axis, color, "dash", True)
-
+    # --- Secondary Y axis (always cell-coloured, dashed) ------------------
     if has_y2:
-        fig.update_xaxes(title_text=xlabel)
+        for it in items:
+            label = it["label"]
+            if label not in raw:
+                continue
+            df = raw[label]
+            if needs_gaps:
+                tmp, x_col = _axis_col_in(df, x_axis)
+                tmp, axis_col = _axis_col_in(tmp, y2_axis)
+                xs, ys = split_half_cycles(tmp, x_col, axis_col)
+            else:
+                xs = _axis_series(df, x_axis)
+                ys = _axis_series(df, y2_axis)
+            cell_color = _rgba_to_css(colors[label])
+            _add(dict(
+                x=xs, y=ys, mode="lines",
+                name=f"{label} ({y2_axis})",
+                line=dict(color=cell_color, width=base_w, dash="dash"),
+                connectgaps=False,
+                # When colouring by status, the left legend is by step name;
+                # the right legend keeps per-cell entries (one per cell) so
+                # users can identify which dashed line belongs to which cell.
+                legendgroup=(f"y2:{label}" if color_by_status else label),
+                showlegend=True if color_by_status else False,
+                hovertemplate=(
+                    f"<b>{label}</b><br>"
+                    "%{x:.3f}<br>"
+                    f"%{{y:.3f}} {y2label.split('(')[-1].rstrip(')')}"
+                    "<extra></extra>"
+                ),
+            ), secondary=True)
+
+    # --- Axis labels + title ----------------------------------------------
+    fig.update_xaxes(title_text=xlabel)
+    if has_y2:
         fig.update_yaxes(title_text=ylabel, secondary_y=False)
         fig.update_yaxes(title_text=y2label, secondary_y=True)
+        xtitle = xlabel.split(" (")[0]
         ytitle = ylabel.split(" (")[0]
         y2title = y2label.split(" (")[0]
-        xtitle = xlabel.split(" (")[0]
-        title_text = f"{ytitle} & {y2title} vs {xtitle}"
+        suffix = " (by status)" if color_by_status else ""
+        title_text = f"{ytitle} & {y2title} vs {xtitle}{suffix}"
     else:
-        fig.update_xaxes(title_text=xlabel)
         fig.update_yaxes(title_text=ylabel)
-        title_text = f"{ylabel.split(' (')[0]} vs {xlabel.split(' (')[0]}"
+        xtitle = xlabel.split(" (")[0]
+        ytitle = ylabel.split(" (")[0]
+        suffix = " (by status)" if color_by_status else ""
+        title_text = f"{ytitle} vs {xtitle}{suffix}"
     return _layout(fig, height, title=title_text)
 
 
@@ -546,21 +666,26 @@ def _build_plotly(
     x_axis: str = "time",
     y_axis: str = "voltage",
     y2_axis: str = "none",
+    color_by_status: bool = False,
+    width_scale: float = 1.0,
 ) -> go.Figure:
     items = _normalise_items(payload)
     colors = _assign_colors(items)
     if mode == "summary":
-        fig = _plotly_summary(items, raw, colors, height)
+        fig = _plotly_summary(items, raw, colors, height, width_scale=width_scale)
     elif mode == "voltage_capacity":
-        fig = _plotly_voltage_capacity(items, raw, colors, height)
+        fig = _plotly_voltage_capacity(items, raw, colors, height, width_scale=width_scale)
     elif mode == "dqdv":
-        fig = _plotly_dqdv(items, raw, colors, int(cycle or 1), height)
+        fig = _plotly_dqdv(items, raw, colors, int(cycle or 1), height, width_scale=width_scale)
     elif mode == "voltage_time":
         # Kept for backwards compatibility (cached figures, library parity).
         # In the GUI, V vs t is reached via mode="xy" with x=time, y=voltage.
-        fig = _plotly_voltage_time(items, raw, colors, height)
+        fig = _plotly_voltage_time(items, raw, colors, height, width_scale=width_scale)
     elif mode == "xy":
-        fig = _plotly_xy(items, raw, colors, x_axis, y_axis, y2_axis, height)
+        fig = _plotly_xy(
+            items, raw, colors, x_axis, y_axis, y2_axis, height,
+            color_by_status=color_by_status, width_scale=width_scale,
+        )
     else:
         raise ValueError(f"Unknown mode {mode!r}")
     if title:
@@ -686,6 +811,7 @@ def _sidebar_connection() -> DatalabPlotClient | None:
                         "ui_preset", "ui_mode",
                         "ui_x_axis", "ui_y_axis", "ui_y2_axis",
                         "ui_cycle", "ui_title", "ui_live",
+                        "ui_color_by_status", "ui_width_scale",
                         "ui_plot_width", "ui_plot_height",
                     ):
                         st.session_state.pop(k, None)
@@ -693,36 +819,58 @@ def _sidebar_connection() -> DatalabPlotClient | None:
     return client
 
 
+def _do_search() -> None:
+    """Run a search using ``ui_query`` and the connected client.
+
+    Used both by the Search button (inline) and as the text input's
+    ``on_change`` callback so pressing Enter in the search box triggers
+    the search without an extra click.
+    """
+    client: DatalabPlotClient | None = st.session_state.get("client")
+    if client is None:
+        return
+    query = st.session_state.get("ui_query", "") or None
+    try:
+        df = find_cells(
+            query=query,
+            item_type=("samples", "cells"),
+            limit=300,
+            client=client,
+        )
+        st.session_state["results"] = df
+        prior = _current_picker_df()
+        prior_by_id = (
+            {
+                r["item_id"]: r.to_dict()
+                for _, r in prior.iterrows()
+                if bool(r["Select"])
+            }
+            if not prior.empty
+            else {}
+        )
+        _set_initial(_build_initial_df(df, prior_by_id))
+        st.session_state["_search_error"] = None
+    except Exception as exc:
+        st.session_state["_search_error"] = str(exc)
+
+
 def _search_section(client: DatalabPlotClient) -> None:
-    """Run a search, store the results DataFrame, and reconcile the picker."""
+    """Render the search row. Enter in the text field or clicking Search
+    both trigger :func:`_do_search`."""
     cols = st.columns([6, 1])
-    query = cols[0].text_input(
+    cols[0].text_input(
         "Search items",
         value=st.session_state.get("ui_query", ""),
-        placeholder="e.g. NMC811 — leave blank to list everything",
+        placeholder="e.g. NMC811 — leave blank to list everything (press Enter to search)",
         label_visibility="collapsed",
         key="ui_query",
+        on_change=_do_search,
     )
     if cols[1].button("Search", use_container_width=True):
-        with st.spinner("Searching…"):
-            try:
-                df = find_cells(
-                    query=query or None,
-                    item_type=("samples", "cells"),
-                    limit=300,
-                    client=client,
-                )
-                st.session_state["results"] = df
-                # Preserve prior selections by item_id across searches.
-                prior = _current_picker_df()
-                prior_by_id = {
-                    r["item_id"]: r.to_dict()
-                    for _, r in prior.iterrows()
-                    if bool(r["Select"])
-                } if not prior.empty else {}
-                _set_initial(_build_initial_df(df, prior_by_id))
-            except Exception as exc:
-                st.error(f"Search failed: {exc}")
+        _do_search()
+    err = st.session_state.pop("_search_error", None)
+    if err:
+        st.error(f"Search failed: {err}")
 
 
 def _picker_table() -> pd.DataFrame:
@@ -779,9 +927,16 @@ def _picker_table() -> pd.DataFrame:
     # We never write to st.session_state[<this widget's key>] (Streamlit
     # forbids it). We read the user's per-row edits from the return value
     # and stash them for the next bulk handler.
+    # Show 1-based row numbers (matching the "Select a range of rows"
+    # expander's 1-indexed inputs). The display index is rebuilt every
+    # render; we reset to a 0-based RangeIndex before stashing so the rest
+    # of the code keeps its existing index assumptions.
+    display_initial = initial.copy()
+    display_initial.index = pd.RangeIndex(start=1, stop=len(display_initial) + 1, name="#")
+
     edited = st.data_editor(
-        initial,
-        hide_index=True,
+        display_initial,
+        hide_index=False,
         use_container_width=True,
         height=min(500, max(220, 38 * (total + 1))),
         column_config={
@@ -799,7 +954,7 @@ def _picker_table() -> pd.DataFrame:
         },
         key=_picker_widget_key(),
     )
-    edited = edited.copy()
+    edited = edited.reset_index(drop=True)
     edited["Select"] = edited["Select"].fillna(False).astype(bool)
     st.session_state["picker_last_edited"] = edited
     return edited
@@ -856,13 +1011,15 @@ def _on_customize_edit() -> None:
 Y2_OPTIONS = ("none", "time", "voltage", "capacity", "current")
 
 
-def _plot_bar() -> tuple[str, str, str, str, int | None, str, bool, bool, float, int]:
+def _plot_bar() -> tuple[str, str, str, str, int | None, str, bool, bool, bool, float, float, int]:
     # Seed defaults the first time these widgets render.
     st.session_state.setdefault("ui_preset", "V vs t")
     st.session_state.setdefault("ui_mode", "xy")
     st.session_state.setdefault("ui_x_axis", "time")
     st.session_state.setdefault("ui_y_axis", "voltage")
     st.session_state.setdefault("ui_y2_axis", "none")
+    st.session_state.setdefault("ui_color_by_status", False)
+    st.session_state.setdefault("ui_width_scale", 2.0)
 
     # Preset segmented control — single visible row, single source of truth
     # for the named-view selection.
@@ -919,10 +1076,20 @@ def _plot_bar() -> tuple[str, str, str, str, int | None, str, bool, bool, float,
             on_change=_on_customize_edit,
         )
         title = cols[4].text_input("Title (optional)", value="", key="ui_title")
+        st.toggle(
+            "Colour traces by cycler step (CC_Chg / CV_Chg / Rest …)",
+            key="ui_color_by_status",
+            disabled=not is_xy,
+            help=(
+                "When on, each trace is split into segments coloured by the file's "
+                "Status / state column. Disables per-cell colouring and the right "
+                "Y-axis."
+            ),
+        )
 
-    # Layout: width + height sliders, tucked out of the way.
+    # Layout: figure size + line-width slider, tucked out of the way.
     with st.expander("Plot layout", expanded=False):
-        lcols = st.columns(2)
+        lcols = st.columns(3)
         width_pct = lcols[0].slider(
             "Plot width", min_value=40, max_value=100,
             value=st.session_state.get("ui_plot_width", 90),
@@ -933,26 +1100,37 @@ def _plot_bar() -> tuple[str, str, str, str, int | None, str, bool, bool, float,
             value=st.session_state.get("ui_plot_height", 520),
             step=20, key="ui_plot_height",
         )
+        width_scale = lcols[2].slider(
+            "Trace width", min_value=0.5, max_value=5.0,
+            value=st.session_state.get("ui_width_scale", 2.0),
+            step=0.25, key="ui_width_scale",
+            help="Multiplies every line width. Useful for screenshots / projectors.",
+        )
 
-    # Compact action row. Refresh = "re-download from server & render".
-    action = st.columns([1, 1, 6])
+    # Compact action row. Columns are wide enough that the labels can't
+    # collapse to per-letter wrapping on narrow windows. The `Auto` toggle
+    # uses a shortened label (help tooltip carries the full description).
+    action = st.columns([1, 1, 2], vertical_alignment="center")
     refresh_click = action[0].button(
-        "Refresh", use_container_width=True,
+        "Refresh",
         help="Purge local cache for selected items and re-fetch from the server.",
+        use_container_width=True,
     )
     live = action[1].toggle(
-        "Auto-refresh",
+        "Auto",
         value=st.session_state.get("ui_live", True),
-        help="Re-render the plot on every selection / preset change.",
+        help="Auto-refresh: re-render the plot on every selection / preset change.",
         key="ui_live",
     )
 
     x_axis = st.session_state["ui_x_axis"]
     y_axis = st.session_state["ui_y_axis"]
     y2_axis = st.session_state["ui_y2_axis"]
+    color_by_status = bool(st.session_state.get("ui_color_by_status", False))
     return (
         mode, x_axis, y_axis, y2_axis, cycle, title,
-        refresh_click, live, width_pct / 100.0, height_px,
+        refresh_click, live, color_by_status,
+        width_pct / 100.0, float(width_scale), height_px,
     )
 
 
@@ -968,6 +1146,8 @@ def _render_plot(
     x_axis: str = "time",
     y_axis: str = "voltage",
     y2_axis: str = "none",
+    color_by_status: bool = False,
+    width_scale: float = 1.0,
     force_refresh: bool,
 ) -> None:
     if not payload:
@@ -1013,6 +1193,7 @@ def _render_plot(
         fig = _build_plotly(
             payload, raw_by_label, mode, cycle, title or None, height_px,
             x_axis=x_axis, y_axis=y_axis, y2_axis=y2_axis,
+            color_by_status=color_by_status, width_scale=width_scale,
         )
     except Exception as exc:
         st.error(f"Plot failed: {exc}")
@@ -1024,6 +1205,7 @@ def _render_plot(
     st.session_state["last_plot"] = {
         "payload": payload, "mode": mode, "cycle": cycle, "title": title,
         "x_axis": x_axis, "y_axis": y_axis, "y2_axis": y2_axis,
+        "color_by_status": color_by_status, "width_scale": width_scale,
         "width_frac": width_frac, "height_px": height_px,
         "hits": hits, "misses": misses,
     }
@@ -1068,9 +1250,20 @@ def _render_cached_figure() -> None:
         )
 
 
-def _mpl_xy_figure(payload, raw, x_axis: str, y_axis: str, y2_axis: str, title: str | None):
-    """Static matplotlib fallback for the generic XY mode (PNG export)."""
+def _mpl_xy_figure(
+    payload, raw, x_axis: str, y_axis: str, y2_axis: str,
+    title: str | None, color_by_status: bool = False,
+    width_scale: float = 1.0,
+):
+    """Static matplotlib fallback for the generic XY mode (PNG export).
+
+    Same composition rules as :func:`_plotly_xy`: status colouring can
+    coexist with a dual-Y secondary axis, which is always cell-coloured
+    and dashed.
+    """
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+
     items = _normalise_items(payload)
     colors = _assign_colors(items)
     xlabel, ylabel = _axis_label(x_axis), _axis_label(y_axis)
@@ -1081,6 +1274,7 @@ def _mpl_xy_figure(payload, raw, x_axis: str, y_axis: str, y2_axis: str, title: 
         or _axis_resets(y_axis)
         or (has_y2 and _axis_resets(y2_axis))
     )
+    lw = 1.0 * width_scale
 
     fig, ax = plt.subplots(figsize=(8, 5))
     ax2 = ax.twinx() if has_y2 else None
@@ -1092,23 +1286,76 @@ def _mpl_xy_figure(payload, raw, x_axis: str, y_axis: str, y2_axis: str, title: 
             return split_half_cycles(tmp, x_col, axis_col)
         return _axis_series(df, x_axis), _axis_series(df, axis)
 
-    for it in items:
-        label = it["label"]
-        if label not in raw:
-            continue
-        df = raw[label]
-        x, y = _xy_for(df, y_axis)
-        ax.plot(x, y, color=colors[label], lw=1.0, label=label)
-        if has_y2:
+    # Primary Y: by status if requested, else cell-coloured.
+    status_handles: dict[str, Line2D] = {}
+    cell_handles: list[tuple[str, Line2D]] = []
+    if color_by_status:
+        for it in items:
+            label = it["label"]
+            if label not in raw:
+                continue
+            df = raw[label]
+            status_col = detect_status_column(df)
+            tmp, x_col = _axis_col_in(df, x_axis)
+            tmp, axis_col = _axis_col_in(tmp, y_axis)
+            if status_col is None:
+                ax.plot(tmp[x_col], tmp[axis_col], color="#777", lw=lw,
+                        label=f"{label} (no status)")
+                continue
+            for xs, ys, sval in split_by_status(tmp, x_col, axis_col, status_col):
+                line, = ax.plot(xs, ys, color=_status_color(sval), lw=lw)
+                if sval not in status_handles:
+                    status_handles[sval] = line
+    else:
+        for it in items:
+            label = it["label"]
+            if label not in raw:
+                continue
+            df = raw[label]
+            x, y = _xy_for(df, y_axis)
+            line, = ax.plot(x, y, color=colors[label], lw=lw, label=label)
+            cell_handles.append((label, line))
+
+    # Secondary Y: always cell-coloured + dashed.
+    if has_y2:
+        for it in items:
+            label = it["label"]
+            if label not in raw:
+                continue
+            df = raw[label]
             x2, y2 = _xy_for(df, y2_axis)
-            ax2.plot(x2, y2, color=colors[label], lw=1.0, ls="--")
+            ax2.plot(x2, y2, color=colors[label], lw=lw, ls="--")
+        ax2.set_ylabel(y2label)
 
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.grid(alpha=0.3)
-    if has_y2:
-        ax2.set_ylabel(y2label)
-    ax.legend(fontsize=8, loc="best")
+
+    # Legend assembly — status entries on the left if colouring by status,
+    # plus per-cell entries (using a dashed-line marker) on the right when
+    # both modes are active so the user can identify which Y2 belongs to
+    # which cell.
+    legend_handles: list[Line2D] = []
+    legend_labels: list[str] = []
+    for sval, line in status_handles.items():
+        legend_handles.append(line)
+        legend_labels.append(sval)
+    for label, line in cell_handles:
+        legend_handles.append(line)
+        legend_labels.append(label)
+    if has_y2 and color_by_status:
+        # Add one dashed proxy per cell to disambiguate the right axis.
+        for it in items:
+            label = it["label"]
+            if label not in raw:
+                continue
+            legend_handles.append(
+                Line2D([0], [0], color=colors[label], lw=lw, ls="--")
+            )
+            legend_labels.append(f"{label} ({y2_axis})")
+    if legend_handles:
+        ax.legend(legend_handles, legend_labels, fontsize=8, loc="best")
+
     if title:
         ax.set_title(title)
     fig.tight_layout()
@@ -1133,6 +1380,8 @@ def _png_export_section(client: DatalabPlotClient) -> None:
                             cfg.get("y_axis", "voltage"),
                             cfg.get("y2_axis", "none"),
                             cfg.get("title") or None,
+                            color_by_status=cfg.get("color_by_status", False),
+                            width_scale=cfg.get("width_scale", 1.0),
                         )
                     else:
                         mpl_fig = plot_cycles(
@@ -1150,8 +1399,23 @@ def _png_export_section(client: DatalabPlotClient) -> None:
                 st.error(f"PNG export failed: {exc}")
 
 
+_GLOBAL_CSS = """
+<style>
+/* Prevent button labels and widget labels (incl. st.toggle) from wrapping
+   into one-character columns on narrow windows. */
+.stButton button p,
+.stButton button div,
+[data-testid="stWidgetLabel"] p,
+[data-testid="stWidgetLabel"] label {
+    white-space: nowrap !important;
+}
+</style>
+"""
+
+
 def main() -> None:
     st.set_page_config(page_title="datalab-plot", layout="wide")
+    st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
     st.title("datalab-plot")
 
     client = _sidebar_connection()
@@ -1163,7 +1427,8 @@ def main() -> None:
     picker_df = _picker_table()
     (
         mode, x_axis, y_axis, y2_axis, cycle, title,
-        refresh_click, live, width_frac, height_px,
+        refresh_click, live, color_by_status,
+        width_frac, width_scale, height_px,
     ) = _plot_bar()
 
     payload = _selected_payload(picker_df)
@@ -1174,7 +1439,8 @@ def main() -> None:
     plot_signature = (
         tuple(sorted((k, v.get("item_id"), v.get("group"), v.get("color"))
                      for k, v in payload.items())),
-        mode, x_axis, y_axis, y2_axis, cycle, title, width_frac, height_px,
+        mode, x_axis, y_axis, y2_axis, cycle, title,
+        color_by_status, width_frac, width_scale, height_px,
     )
     selection_changed = (
         plot_signature != st.session_state.get("last_plot_signature")
@@ -1189,6 +1455,7 @@ def main() -> None:
         _render_plot(
             client, payload, mode, cycle, title, width_frac, height_px,
             x_axis=x_axis, y_axis=y_axis, y2_axis=y2_axis,
+            color_by_status=color_by_status, width_scale=width_scale,
             force_refresh=refresh_click,
         )
         st.session_state["last_plot_signature"] = plot_signature
