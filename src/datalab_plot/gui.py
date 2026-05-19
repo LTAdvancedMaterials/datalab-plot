@@ -879,18 +879,23 @@ def _do_search() -> None:
 
 
 def _search_section(client: DatalabPlotClient) -> None:
-    """Render the search row. Enter in the text field or clicking Search
-    both trigger :func:`_do_search`."""
-    cols = st.columns([6, 1])
-    cols[0].text_input(
-        "Search items",
-        value=st.session_state.get("ui_query", ""),
-        placeholder="e.g. NMC811 — leave blank to list everything (press Enter to search)",
-        label_visibility="collapsed",
-        key="ui_query",
-        on_change=_do_search,
-    )
-    if cols[1].button("Search", use_container_width=True):
+    """Render the search row inside ``st.form`` so Enter always submits —
+    a text_input's ``on_change`` callback only fires when the value changes,
+    which means pressing Enter on an empty field with no prior value would
+    silently do nothing. The form's submit event fires on Enter regardless."""
+    with st.form("search_form", clear_on_submit=False, border=False):
+        cols = st.columns([6, 1])
+        cols[0].text_input(
+            "Search items",
+            value=st.session_state.get("ui_query", ""),
+            placeholder="e.g. NMC811 — leave blank to list everything (press Enter to search)",
+            label_visibility="collapsed",
+            key="ui_query",
+        )
+        submitted = cols[1].form_submit_button(
+            "Search", use_container_width=True,
+        )
+    if submitted:
         _do_search()
     err = st.session_state.pop("_search_error", None)
     if err:
@@ -964,7 +969,11 @@ def _picker_table() -> pd.DataFrame:
         use_container_width=True,
         height=min(500, max(220, 38 * (total + 1))),
         column_config={
-            "Select": st.column_config.CheckboxColumn("✓", width="small"),
+            # 50 px is the practical floor — glide-data-grid (the lib
+            # Streamlit's data_editor wraps) hard-codes `minColumnWidth=50`
+            # in the frontend bundle and silently clamps anything smaller.
+            # Streamlit doesn't expose a setting to override it.
+            "Select": st.column_config.CheckboxColumn("✓", width=50),
             "item_id": st.column_config.TextColumn("item_id", disabled=True, width="small"),
             "name": st.column_config.TextColumn("name", disabled=True),
             "chemform": st.column_config.TextColumn("chemform", disabled=True, width="small"),
