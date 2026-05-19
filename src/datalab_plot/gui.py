@@ -8,8 +8,10 @@ from typing import Any
 import matplotlib
 import pandas as pd
 import plotly.graph_objects as go
+from dotenv import load_dotenv
 from plotly.subplots import make_subplots
 
+load_dotenv()
 matplotlib.use("Agg")
 import streamlit as st  # noqa: E402
 
@@ -761,11 +763,32 @@ def _sidebar_connection() -> DatalabPlotClient | None:
     client: DatalabPlotClient | None = st.session_state.get("client")
 
     if client is None:
+        # Auto-connect when credentials are already in the environment (.env file).
+        env_url = os.environ.get("DATALAB_URL", "")
+        env_key = os.environ.get("DATALAB_API_KEY", "")
+        if env_url and env_key and not st.session_state.get("auto_connect_failed"):
+            try:
+                c = DatalabPlotClient(env_url)
+                c.__enter__()
+                info = c.client.get_info()
+                st.session_state["client"] = c
+                st.session_state["server_name"] = (
+                    info.get("data", {}).get("attributes", {}).get("name", env_url)
+                )
+                st.rerun()
+            except Exception as exc:
+                st.session_state["auto_connect_failed"] = str(exc)
+
         st.sidebar.subheader("Connect")
-        url = st.sidebar.text_input("Datalab URL", value=DEFAULT_URL, key="ui_url")
+        if st.session_state.get("auto_connect_failed"):
+            st.sidebar.warning(
+                f"Auto-connect failed: {st.session_state['auto_connect_failed']}\n\n"
+                "Check your `.env` file or connect manually below."
+            )
+        url = st.sidebar.text_input("Datalab URL", value=env_url or DEFAULT_URL, key="ui_url")
         api_key = st.sidebar.text_input(
             "API key",
-            value=os.environ.get("DATALAB_API_KEY", ""),
+            value=env_key,
             type="password",
             help="Held in memory for this session only.",
             key="ui_api_key",
@@ -775,6 +798,7 @@ def _sidebar_connection() -> DatalabPlotClient | None:
                 st.sidebar.error("API key is required.")
             else:
                 os.environ["DATALAB_API_KEY"] = api_key
+                st.session_state.pop("auto_connect_failed", None)
                 try:
                     c = DatalabPlotClient(url)
                     c.__enter__()
