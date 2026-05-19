@@ -651,8 +651,8 @@ def _picker_table() -> pd.DataFrame:
     return edited
 
 
-def _plot_bar() -> tuple[str, int | None, str, bool, int]:
-    cols = st.columns([2, 1, 3, 1, 1])
+def _plot_bar() -> tuple[str, int | None, str, bool, bool, bool]:
+    cols = st.columns([2, 1, 3, 1, 1, 1])
     mode = cols[0].selectbox(
         "Mode",
         ["voltage_time", "summary", "voltage_capacity", "dqdv"],
@@ -666,18 +666,24 @@ def _plot_bar() -> tuple[str, int | None, str, bool, int]:
     if mode != "dqdv":
         cols[1].empty()
     title = cols[2].text_input("Title (optional)", value="", key="ui_title")
-    refresh_click = cols[3].button(
-        "Refresh from server",
-        help="Purge local cache for selected items and re-fetch.",
-        use_container_width=True,
+    plot_click = cols[3].button(
+        "Plot", type="primary", use_container_width=True,
+        help="Render the plot from currently-selected cells.",
     )
-    auto = cols[4].toggle(
-        "Auto-plot",
-        value=st.session_state.get("ui_auto_plot", True),
-        help="Re-render the plot on every selection change.",
-        key="ui_auto_plot",
+    refresh_click = cols[4].button(
+        "Refresh", use_container_width=True,
+        help="Purge local cache for selected items and re-fetch from the server.",
     )
-    return mode, cycle, title, refresh_click, auto
+    live = cols[5].toggle(
+        "Live",
+        value=st.session_state.get("ui_live", False),
+        help=(
+            "When on, the plot re-renders on every selection change. "
+            "Off by default — clicking checkboxes is snappy and you Plot when ready."
+        ),
+        key="ui_live",
+    )
+    return mode, cycle, title, plot_click, refresh_click, live
 
 
 def _plot_size_controls() -> tuple[float, int]:
@@ -749,43 +755,77 @@ def _render_plot(
         st.error(f"Plot failed: {exc}")
         return
 
-    left_pad = (1.0 - width_frac) / 2
-    if left_pad > 0:
-        cols = st.columns([left_pad, width_frac, left_pad])
-        plot_holder = cols[1]
-    else:
-        plot_holder = st.container()
-    with plot_holder:
-        st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
-
-    total = hits + misses
-    if total:
-        st.caption(f"Files: {hits}/{total} cache hit · {misses}/{total} re-downloaded.")
-
+    # Persist for re-display on subsequent reruns (so checkbox clicks don't
+    # have to rebuild + reship the figure).
+    st.session_state["last_fig"] = fig
     st.session_state["last_plot"] = {
         "payload": payload, "mode": mode, "cycle": cycle, "title": title,
+        "width_frac": width_frac, "height_px": height_px,
+        "hits": hits, "misses": misses,
     }
 
-    with st.expander("Export static PNG"):
-        if st.button("Generate PNG"):
-            try:
-                with st.spinner("Rendering PNG via matplotlib…"):
-                    mpl_fig = plot_cycles(
-                        payload, mode=mode, cycle=cycle, client=client, title=title or None
-                    )
-                st.download_button(
-                    "Download PNG",
-                    data=_fig_to_png_bytes(mpl_fig),
-                    file_name=f"datalab_plot_{mode}.png",
-                    mime="image/png",
-                )
-            except Exception as exc:
-                st.error(f"PNG export failed: {exc}")
+    # Don't render the plot or PNG-export expander here -- main() owns the
+    # plot area so the figure persists across reruns at a stable widget key.
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+def _render_cached_figure() -> None:
+    """Re-display the last rendered figure across reruns at a stable widget key.
+
+    This keeps the plot visible while the user toggles checkboxes without
+    rebuilding or re-shipping the plotly figure on every click.
+    """
+    fig = st.session_state.get("last_fig")
+    if fig is None:
+        return
+    cfg = st.session_state.get("last_plot", {})
+    width_frac = cfg.get("width_frac", 0.9)
+    left_pad = (1.0 - width_frac) / 2
+    if left_pad > 0:
+        cols = st.columns([left_pad, width_frac, left_pad])
+        holder = cols[1]
+    else:
+        holder = st.container()
+    with holder:
+        # Stable key — same widget across reruns, so Streamlit/plotly diff
+        # rather than re-mount when only ancillary widgets change.
+        st.plotly_chart(
+            fig, use_container_width=True, key="main_plot",
+            config={"displaylogo": False},
+        )
+    hits, misses = cfg.get("hits", 0), cfg.get("misses", 0)
+    if hits + misses:
+        st.caption(
+            f"Files: {hits}/{hits + misses} cache hit · "
+            f"{misses}/{hits + misses} re-downloaded."
+        )
+
+
+def _png_export_section(client: DatalabPlotClient) -> None:
+    cfg = st.session_state.get("last_plot")
+    if not cfg:
+        return
+    with st.expander("Export static PNG"):
+        if st.button("Generate PNG", key="png_btn"):
+            try:
+                with st.spinner("Rendering PNG via matplotlib…"):
+                    mpl_fig = plot_cycles(
+                        cfg["payload"], mode=cfg["mode"], cycle=cfg.get("cycle"),
+                        client=client, title=cfg.get("title") or None,
+                    )
+                st.download_button(
+                    "Download PNG",
+                    data=_fig_to_png_bytes(mpl_fig),
+                    file_name=f"datalab_plot_{cfg['mode']}.png",
+                    mime="image/png",
+                    key="png_dl",
+                )
+            except Exception as exc:
+                st.error(f"PNG export failed: {exc}")
+
 
 def main() -> None:
     st.set_page_config(page_title="datalab-plot", layout="wide")
@@ -798,18 +838,45 @@ def main() -> None:
 
     _search_section(client)
     picker_df = _picker_table()
-    mode, cycle, title, refresh_click, auto = _plot_bar()
+    mode, cycle, title, plot_click, refresh_click, live = _plot_bar()
     width_frac, height_px = _plot_size_controls()
 
     payload = _selected_payload(picker_df)
 
-    if auto or refresh_click:
+    # Detect whether the live-mode plot inputs changed since the last render —
+    # if not, skip the rebuild even with Live on. This keeps checkbox toggles
+    # snappy in Live mode when only e.g. the title or width slider moves.
+    plot_signature = (
+        tuple(sorted((k, v.get("item_id"), v.get("group"), v.get("color"))
+                     for k, v in payload.items())),
+        mode, cycle, title, width_frac, height_px,
+    )
+    selection_changed = (
+        plot_signature != st.session_state.get("last_plot_signature")
+    )
+
+    should_render = (
+        plot_click
+        or refresh_click
+        or (live and selection_changed and payload)
+    )
+
+    if should_render:
         _render_plot(
             client, payload, mode, cycle, title, width_frac, height_px,
             force_refresh=refresh_click,
         )
+        st.session_state["last_plot_signature"] = plot_signature
+
+    # Always re-display the cached figure (kept stable by key="main_plot"),
+    # so checkbox toggles in non-Live mode don't blank the plot.
+    if "last_fig" in st.session_state:
+        _render_cached_figure()
+        _png_export_section(client)
+    elif payload:
+        st.caption("Click **Plot** to render the selected cells.")
     else:
-        st.caption("Auto-plot is off. Enable it in the controls above to render.")
+        st.caption("Tick rows in the picker, then click **Plot**.")
 
 
 if __name__ == "__main__":
