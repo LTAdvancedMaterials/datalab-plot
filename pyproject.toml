@@ -7,10 +7,6 @@ readme = "README.md"
 keywords = ["datalab", "electrochemistry", "battery", "cycling", "nmr", "xrd"]
 authors = [{ name = "LT Advanced Materials" }]
 
-[project.urls]
-Homepage = "https://github.com/ltadvancedmaterials/datalab-plot"
-Repository = "https://github.com/ltadvancedmaterials/datalab-plot"
-Issues = "https://github.com/ltadvancedmaterials/datalab-plot/issues"
 dependencies = [
     "datalab-api>=0.5.0",
     "jupyter>=1.1.1",
@@ -25,6 +21,11 @@ dependencies = [
     "scipy>=1.13",
     "xlrd>=2.0.2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ltadvancedmaterials/datalab-plot"
+Repository = "https://github.com/ltadvancedmaterials/datalab-plot"
+Issues = "https://github.com/ltadvancedmaterials/datalab-plot/issues"
 
 [project.optional-dependencies]
 picker = ["ipywidgets>=8"]
