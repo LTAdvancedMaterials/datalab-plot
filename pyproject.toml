@@ -2,7 +2,10 @@
 name = "datalab-plot"
 version = "0.1.0"
 description = "Plot data from a datalab instance locally in Jupyter, Python, or a Streamlit web GUI. Multi-cell echem comparisons, NMR, XRD, UV-Vis."
-requires-python = ">=3.12"
+# navani 0.1.x pins numpy<2, and numpy 1.26.4 only publishes cp312 wheels —
+# Python >=3.13 forces a from-source numpy build, which fails on Windows
+# without MSVC. Cap to 3.12 until navani relaxes its numpy pin.
+requires-python = ">=3.12,<3.13"
 readme = "README.md"
 keywords = ["datalab", "electrochemistry", "battery", "cycling", "nmr", "xrd"]
 authors = [{ name = "LT Advanced Materials" }]

@@ -18,30 +18,115 @@ signing into the instance in a browser and visiting `<DATALAB_URL>/get-api-key`.
 
 ### 1 · Install
 
-Pick whichever fits — both give you the `datalab-plot` command, the Python
-library, and the GUI. Python 3.12+ required either way.
+Works on macOS, Linux, and Windows. **Python 3.12 is required** — see the
+note at the end of this section for why.
 
-**Option A — clone the repo** (recommended if you want the starter notebook
-to hand or might tweak the code):
+#### 1a · Install `uv` (one-time, recommended)
+
+`uv` is the easiest path because it fetches Python 3.12 for you on any OS,
+no separate Python install needed.
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+```powershell
+# Windows PowerShell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Restart your terminal so `uv` is on `PATH`, then `uv --version` should print
+a version. (Already have `uv`? Skip to 1b.)
+
+#### 1b · Pick an install path
+
+**Option A — install without cloning** (the common case):
+
+1. Open a terminal in a directory where you want the project's virtual
+   environment to live (e.g. `cd ~/projects` or `cd $HOME`).
+2. Create a Python 3.12 venv. `uv` downloads 3.12 automatically if you
+   don't already have it:
+
+   ```bash
+   uv venv --python 3.12
+   ```
+
+   This creates a `.venv/` folder next to you.
+
+3. Install `datalab-plot` into that venv straight from GitHub:
+
+   ```bash
+   uv pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
+   ```
+
+4. Activate the venv so the `datalab-plot` command is on your `PATH`:
+
+   ```bash
+   # macOS / Linux
+   source .venv/bin/activate
+   ```
+
+   ```powershell
+   # Windows PowerShell
+   .venv\Scripts\Activate.ps1
+   ```
+
+5. Confirm it works:
+
+   ```bash
+   datalab-plot --help
+   ```
+
+**Option B — clone the repo** (pick this if you want the starter notebook
+or might edit the code):
 
 ```bash
 git clone https://github.com/ltadvancedmaterials/datalab-plot
 cd datalab-plot
-uv sync --extra gui --extra picker         # or: pip install -e ".[gui,picker]"
+uv sync --extra gui --extra picker
 ```
 
-**Option B — install without cloning** (recommended for everyone else):
+`uv sync` reads `pyproject.toml`, creates `.venv/` in the repo on Python
+3.12, and installs everything. You can then either activate the venv
+(`source .venv/bin/activate` or `.venv\Scripts\Activate.ps1`) and call
+`datalab-plot ...` directly, or prefix every command with `uv run` (e.g.
+`uv run datalab-plot --help`) which uses the venv without activation.
 
-```bash
-pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
-```
-or with uv:
-```bash
+#### What's `[gui]` / `[picker]`?
+
+Optional extras:
+- `[gui]` — installs Streamlit + Plotly for the `datalab-plot gui` web UI.
+- `[picker]` — installs ipywidgets for the interactive cell-picker in the
+  starter notebook.
+
+The core library/CLI works without either. To install just the core:
+`uv pip install "datalab-plot @ git+https://github.com/ltadvancedmaterials/datalab-plot"`.
+
+#### Why pin Python 3.12?
+
+An upstream dependency (`navani`) pins `numpy<2`, and numpy 1.26 only
+publishes binary wheels for cp312. On Python 3.13+ the resolver still
+picks numpy 1.26 and falls back to building it from source, which needs
+a C/C++ toolchain (MSVC on Windows) — painful and slow. Sticking to 3.12
+sidesteps this entirely. We'll lift the cap once `navani` releases a
+numpy-2 compatible version.
+
+<details>
+<summary><b>Troubleshooting:</b> <code>Failed to build numpy==1.26.4</code> / "Unknown compiler" on Windows</summary>
+
+Your interpreter is Python 3.13 or newer. Re-do the install with an
+explicit 3.12 venv:
+
+```powershell
+# from scratch
+Remove-Item -Recurse -Force .venv
+uv venv --python 3.12
 uv pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
+.venv\Scripts\Activate.ps1
 ```
 
-Optional extras: `[gui]` for the Streamlit web UI, `[picker]` for the
-ipywidgets cell-picker in Jupyter. The core package works without either.
+</details>
 
 ### 2 · Launch the web UI
 
