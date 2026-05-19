@@ -13,173 +13,57 @@ single-cell deep dives, NMR / XRD / UV-Vis. Three user surfaces:
 
 ## Quickstart
 
-You'll need a datalab instance URL and a personal API token. Get the token by
-signing into the instance in a browser and visiting `<DATALAB_URL>/get-api-key`.
+Three commands from a cold machine to the web UI. Works on macOS, Linux,
+and Windows. You'll need a datalab instance URL and a personal API token
+(get one at `<DATALAB_URL>/get-api-key`).
 
-### 1 · Install
+### 1 · Install `uv`
 
-Works on macOS, Linux, and Windows. **Python 3.12 is required** — see the
-note at the end of this section for why.
+[`uv`](https://docs.astral.sh/uv/) fetches the right Python for you — no
+separate Python install needed.
 
-#### 1a · Install `uv` (one-time, recommended)
-
-`uv` is the easiest path because it fetches Python 3.12 for you on any OS,
-no separate Python install needed.
-
+**macOS / Linux:**
 ```bash
-# macOS / Linux
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
+**Windows PowerShell:**
 ```powershell
-# Windows PowerShell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Restart your terminal so `uv` is on `PATH`, then `uv --version` should print
-a version. (Already have `uv`? Skip to 1b.)
+Restart your terminal so `uv` is on `PATH`. Already have `uv`? Skip ahead.
 
-#### 1b · Pick an install path
+### 2 · Install `datalab-plot`
 
-**Option A — install without cloning** (the common case):
-
-1. Open a terminal in a directory where you want the project's virtual
-   environment to live (e.g. `cd ~/projects` or `cd $HOME`).
-2. Create a Python 3.12 venv. `uv` downloads 3.12 automatically if you
-   don't already have it:
-
-   ```bash
-   uv venv --python 3.12
-   ```
-
-   This creates a `.venv/` folder next to you.
-
-3. Install `datalab-plot` into that venv straight from GitHub:
-
-   ```bash
-   uv pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
-   ```
-
-4. Activate the venv so the `datalab-plot` command is on your `PATH`:
-
-   ```bash
-   # macOS / Linux
-   source .venv/bin/activate
-   ```
-
-   ```powershell
-   # Windows PowerShell
-   .venv\Scripts\Activate.ps1
-   ```
-
-5. Confirm it works:
-
-   ```bash
-   datalab-plot --help
-   ```
-
-**Option B — clone the repo** (pick this if you want the starter notebook
-or might edit the code):
+From any directory you want the project's environment to live in (e.g.
+your home dir). The two commands below are identical on all OSes:
 
 ```bash
-git clone https://github.com/ltadvancedmaterials/datalab-plot
-cd datalab-plot
-uv sync --extra gui --extra picker
-```
-
-`uv sync` reads `pyproject.toml`, creates `.venv/` in the repo on Python
-3.12, and installs everything. You can then either activate the venv
-(`source .venv/bin/activate` or `.venv\Scripts\Activate.ps1`) and call
-`datalab-plot ...` directly, or prefix every command with `uv run` (e.g.
-`uv run datalab-plot --help`) which uses the venv without activation.
-
-#### What's `[gui]` / `[picker]`?
-
-Optional extras:
-- `[gui]` — installs Streamlit + Plotly for the `datalab-plot gui` web UI.
-- `[picker]` — installs ipywidgets for the interactive cell-picker in the
-  starter notebook.
-
-The core library/CLI works without either. To install just the core:
-`uv pip install "datalab-plot @ git+https://github.com/ltadvancedmaterials/datalab-plot"`.
-
-#### Why pin Python 3.12?
-
-An upstream dependency (`navani`) pins `numpy<2`, and numpy 1.26 only
-publishes binary wheels for cp312. On Python 3.13+ the resolver still
-picks numpy 1.26 and falls back to building it from source, which needs
-a C/C++ toolchain (MSVC on Windows) — painful and slow. Sticking to 3.12
-sidesteps this entirely. We'll lift the cap once `navani` releases a
-numpy-2 compatible version.
-
-<details>
-<summary><b>Troubleshooting:</b> <code>Failed to build numpy==1.26.4</code> / "Unknown compiler" on Windows</summary>
-
-Your interpreter is Python 3.13 or newer. Re-do the install with an
-explicit 3.12 venv:
-
-```powershell
-# from scratch
-Remove-Item -Recurse -Force .venv
 uv venv --python 3.12
 uv pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
-.venv\Scripts\Activate.ps1
 ```
 
-</details>
+`uv` downloads Python 3.12 if you don't already have it, creates `.venv/`
+next to you, and installs `datalab-plot` plus the GUI/Jupyter extras.
 
-### 2 · Launch the web UI
+### 3 · Launch the web UI
 
 ```bash
-datalab-plot gui                 # opens http://localhost:8501
+uv run datalab-plot gui
 ```
 
-The web UI **does not require any environment variables** — the URL field is
-pre-filled to `https://datalab.lightningtree.ai/` and the API key has a
-password input in the sidebar. Paste your key → **Connect** → search for
-items (e.g. `NMC811`) → tick rows → pick a plot mode. Plot auto-updates
-as you tick / untick rows.
+`uv run` finds the `.venv` automatically — no activation needed. Your
+browser opens to `http://localhost:8501`. Paste your API key in the
+sidebar → **Connect** → search → tick rows → pick a plot mode.
 
-### 3 · …or use it from Python
+> Run subsequent commands from the same directory so `uv run` finds the
+> venv, or activate it once with `source .venv/bin/activate`
+> (macOS/Linux) or `.venv\Scripts\Activate.ps1` (Windows) and drop the
+> `uv run` prefix.
 
-For the Python API, CLI, and notebook, export the credentials once per shell:
-
-```bash
-export DATALAB_URL=https://datalab.lightningtree.ai/
-export DATALAB_API_KEY=...
-```
-
-Then:
-
-```python
-from datalab_plot import plot_cycles, find_cells, DatalabPlotClient
-
-# Browse what's on the instance
-print(find_cells(query="NMC811", limit=20)[["item_id", "name", "chemform"]])
-
-# Multi-cell comparison: discharge capacity + CE vs cycle
-with DatalabPlotClient() as client:
-    fig = plot_cycles(
-        {
-            "Pristine #1": {"item_id": "XXKSRF", "group": "Pristine"},
-            "Pristine #2": {"item_id": "SJMSEL", "group": "Pristine"},
-            "LiAlO2 #1":   {"item_id": "TNDKZB", "group": "LiAlO2"},
-            "LiAlO2 #2":   {"item_id": "RQMFUG", "group": "LiAlO2"},
-        },
-        mode="summary",
-        client=client,
-    )
-    fig.savefig("comparison.png", dpi=140)
-```
-
-### 4 · …or open the starter notebook
-
-```bash
-jupyter lab notebooks/starter.ipynb
-```
-
-The notebook walks through URL/key setup, an interactive `pick_cells` widget,
-all four cycling plot modes, and a custom-grouping example.
+See [Install](#install) below for the repo-clone setup, `pip`-only
+install, and troubleshooting.
 
 ---
 
@@ -304,6 +188,89 @@ datalab-plot gui
 ```
 
 `datalab-plot --help` and `datalab-plot <subcommand> --help` print everything.
+
+## Install
+
+The [Quickstart](#quickstart) covers the common path (`uv` + no clone +
+GUI). The variants below are for everyone else.
+
+### Clone the repo
+
+Pick this if you want the starter notebook to hand or might tweak the
+code.
+
+```bash
+git clone https://github.com/ltadvancedmaterials/datalab-plot
+cd datalab-plot
+uv sync --extra gui --extra picker
+```
+
+`uv sync` creates `.venv/` in the repo on Python 3.12 and installs
+everything from `pyproject.toml`. Activate the venv
+(`source .venv/bin/activate` / `.venv\Scripts\Activate.ps1`) or prefix
+commands with `uv run`.
+
+### Without `uv` (plain `pip`)
+
+You must be on Python 3.12 — see [why](#why-pin-python-312) below.
+
+```bash
+python3.12 -m venv .venv
+# macOS / Linux:
+source .venv/bin/activate
+# Windows PowerShell:
+.venv\Scripts\Activate.ps1
+
+pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
+```
+
+### Optional extras
+
+| Extra      | Pulls in                  | Needed for                                |
+|------------|---------------------------|-------------------------------------------|
+| `[gui]`    | Streamlit, Plotly         | `datalab-plot gui` web UI                 |
+| `[picker]` | ipywidgets                | Interactive `pick_cells` in Jupyter       |
+
+Core library + CLI work without either:
+
+```bash
+uv pip install "datalab-plot @ git+https://github.com/ltadvancedmaterials/datalab-plot"
+```
+
+### Why pin Python 3.12?
+
+An upstream dependency (`navani`) pins `numpy<2`, and numpy 1.26 only
+publishes binary wheels for cp312. On Python 3.13+ the resolver still
+picks numpy 1.26 and falls back to building it from source, which needs
+a C/C++ toolchain (MSVC on Windows) — painful and slow. Sticking to 3.12
+sidesteps this entirely. We'll lift the cap once `navani` releases a
+numpy-2 compatible version.
+
+### Troubleshooting
+
+<details>
+<summary><code>Failed to build numpy==1.26.4</code> / "Unknown compiler" on Windows</summary>
+
+Your interpreter is Python 3.13 or newer. Re-create the venv on 3.12:
+
+```powershell
+Remove-Item -Recurse -Force .venv
+uv venv --python 3.12
+uv pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
+```
+
+</details>
+
+<details>
+<summary><code>datalab-plot: command not found</code></summary>
+
+Either your `.venv` isn't activated and you're not using `uv run`, or
+you're in a different directory than the one you installed into. Either
+re-run from the install directory with `uv run datalab-plot ...`, or
+activate the venv (`source .venv/bin/activate` /
+`.venv\Scripts\Activate.ps1`) and try again.
+
+</details>
 
 ## How it works
 
