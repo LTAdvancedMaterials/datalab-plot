@@ -134,7 +134,7 @@ def _cmd_gui(args: argparse.Namespace) -> int:
         return 1
     from pathlib import Path
 
-    script = str(Path(__file__).with_name("gui.py"))
+    script = str(Path(__file__).parent / "gui" / "app.py")
     flag_options = {
         "server.port": args.port,
         "server.headless": args.no_browser,

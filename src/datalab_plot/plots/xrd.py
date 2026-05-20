@@ -42,9 +42,10 @@ def plot_xrd(
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 5))
     else:
-        fig = ax.figure
+        # ax belongs to a top-level Figure (never a SubFigure) in this app.
+        fig = ax.figure  # type: ignore[assignment]
 
-    for i, (f, path) in enumerate(zip(candidates, paths)):
+    for i, (f, path) in enumerate(zip(candidates, paths, strict=False)):
         df = load_xrd(path)
         y = df["intensity"].astype(float)
         if normalize:

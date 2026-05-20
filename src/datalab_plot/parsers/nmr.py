@@ -1,6 +1,7 @@
 """Parse 1D NMR spectra. Ported from pydatalab apps/nmr/utils.py."""
 from __future__ import annotations
 
+import logging
 import tempfile
 import warnings
 import zipfile
@@ -9,6 +10,7 @@ from pathlib import Path
 import nmrglue as ng
 import pandas as pd
 
+logger = logging.getLogger(__name__)
 
 NMR_EXTENSIONS = (".zip", ".jdx", ".dx")
 
@@ -18,12 +20,16 @@ def is_nmr_file(file_meta: dict) -> bool:
     return any(name.endswith(ext) for ext in NMR_EXTENSIONS)
 
 
-def _read_bruker_dir(data_dir: Path, process_number: int = 1) -> tuple[pd.DataFrame, dict, str | None]:
+def _read_bruker_dir(
+    data_dir: Path, process_number: int = 1
+) -> tuple[pd.DataFrame, dict, str | None]:
     a_dic, a_data = ng.fileio.bruker.read(str(data_dir))
     pdata_dir = data_dir / "pdata" / str(process_number)
     try:
         p_dic, p_data = ng.fileio.bruker.read_pdata(str(pdata_dir))
     except Exception:
+        # No processed data on disk — fall through to FFT-from-FID below.
+        logger.debug("read_pdata failed for %s; will process raw FID", pdata_dir)
         p_dic, p_data = None, None
 
     title = None
@@ -38,12 +44,15 @@ def _read_bruker_dir(data_dir: Path, process_number: int = 1) -> tuple[pd.DataFr
         uc = ng.fileiobase.uc_from_udic(udic)
         if udic[0]["time"]:
             warnings.warn(
-                "Bruker project has no processed data; running FFT + ACME autophase."
+                "Bruker project has no processed data; running FFT + ACME autophase.",
+                stacklevel=2,
             )
             try:
                 a_data = ng.bruker.remove_digital_filter(a_dic, a_data)
             except Exception:
-                pass
+                # Digital-filter metadata absent/unsupported — proceed with
+                # the raw FID; the FFT below still produces a usable spectrum.
+                logger.debug("remove_digital_filter failed; using raw FID", exc_info=True)
             p_data = ng.process.proc_base.fft(a_data)
         else:
             p_data = a_data

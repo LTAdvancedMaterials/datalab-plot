@@ -9,15 +9,14 @@ import pandas as pd
 from matplotlib.figure import Figure
 
 from ..client import DatalabPlotClient, _resolve_client
-from ..parsers.echem import (
-    compute_dqdv,
-    cycle_summary,
-    filter_by_cycle,
-    is_cycling_file,
-    load_echem,
-    split_half_cycles,
+from ..parsers.echem import is_cycling_file, load_echem
+from ..series import (
+    PER_CELL_CMAPS,
+    dqdv_series,
+    summary_series,
+    voltage_capacity_series,
+    voltage_time_series,
 )
-
 
 ItemsArg = list[str] | Mapping[str, str] | Mapping[str, Mapping[str, Any]]
 
@@ -171,11 +170,11 @@ def _plot_summary(
     labels: list[str] = []
     for it in items:
         label = it["label"]
-        summ = cycle_summary(raw[label])
+        s = summary_series(raw[label])
         line, = ax1.plot(
-            summ["cycle"], summ["Discharge_mAh"], color=colors[label], lw=1.4, label=label
+            s.cycle, s.discharge_mah, color=colors[label], lw=1.4, label=label
         )
-        ax2.plot(summ["cycle"], 100 * summ["CE"], color=colors[label], lw=1.4)
+        ax2.plot(s.cycle, s.ce_percent, color=colors[label], lw=1.4)
         handles.append(line)
         labels.append(label)
     ax1.set_xlabel("Cycle number")
@@ -208,9 +207,6 @@ def _plot_summary(
     return fig
 
 
-_PER_CELL_CMAPS = ("viridis", "plasma", "inferno", "magma", "cividis")
-
-
 def _plot_voltage_capacity(
     items: list[dict],
     raw: dict[str, pd.DataFrame],
@@ -229,25 +225,20 @@ def _plot_voltage_capacity(
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
     else:
-        fig = ax.figure
+        # ax belongs to a top-level Figure (never a SubFigure) in this app.
+        fig = ax.figure  # type: ignore[assignment]
 
     legend_handles: list[Line2D] = []
     legend_labels: list[str] = []
     for cell_idx, it in enumerate(items):
         label = it["label"]
-        df = raw[label]
-        if "full cycle" not in df.columns:
+        traces = voltage_capacity_series(raw[label])
+        if not traces:
             continue
-        cycle_ids = sorted({int(c) for c in df["full cycle"].dropna().unique() if c > 0})
-        if not cycle_ids:
-            continue
-        cmap_name = _PER_CELL_CMAPS[cell_idx % len(_PER_CELL_CMAPS)]
+        cmap_name = PER_CELL_CMAPS[cell_idx % len(PER_CELL_CMAPS)]
         cmap = plt.colormaps[cmap_name]
-        n = len(cycle_ids)
-        for j, cid in enumerate(cycle_ids):
-            cyc = df[df["full cycle"] == cid]
-            x, y = split_half_cycles(cyc, "Capacity", "Voltage")
-            ax.plot(x, y, color=cmap(j / max(1, n - 1)), lw=0.9)
+        for t in traces:
+            ax.plot(t.x, t.y, color=cmap(t.frac), lw=0.9)
         legend_handles.append(Line2D([0], [0], color=cmap(0.5), lw=3))
         legend_labels.append(f"{label}  ({cmap_name})")
 
@@ -272,17 +263,12 @@ def _plot_dqdv(
     if ax is None:
         fig, ax = plt.subplots(figsize=(7, 5))
     else:
-        fig = ax.figure
+        # ax belongs to a top-level Figure (never a SubFigure) in this app.
+        fig = ax.figure  # type: ignore[assignment]
     for it in items:
         label = it["label"]
-        cyc = filter_by_cycle(raw[label], cycle)
-        if cyc.empty:
-            continue
-        diff = compute_dqdv(cyc, mode="dQ/dV")
-        if diff.empty:
-            continue
-        x, y = split_half_cycles(diff, "voltage (V)", "dQ/dV (mA/V)")
-        ax.plot(x, y, label=label, color=colors[label], lw=1.2)
+        for t in dqdv_series(raw[label], cycle):
+            ax.plot(t.x, t.y, label=label, color=colors[label], lw=1.2)
     ax.set_xlabel("Voltage (V)")
     ax.set_ylabel("dQ/dV (mA/V)")
     ax.set_title(title or f"dQ/dV, cycle {cycle}")
@@ -290,25 +276,6 @@ def _plot_dqdv(
     ax.legend(fontsize=8, loc="best")
     fig.tight_layout()
     return fig
-
-
-def _cumulative_time_hours(df: pd.DataFrame) -> pd.Series:
-    """Return a monotonic-elapsed-time series in hours for a navani DataFrame.
-
-    Preference order:
-      1. ``Test_Time(s)`` — the cycler's running clock (Arbin etc.), monotonic
-         by definition, never resets per step or cycle.
-      2. ``Time`` — navani's standardised column, if it happens to be monotonic.
-      3. Reconstruct from non-monotonic time by clamping negative deltas to 0
-         (so step-time / cycle-time resets are absorbed into a forward-only sum).
-    """
-    for col in ("Test_Time(s)", "Time"):
-        if col in df.columns and df[col].is_monotonic_increasing:
-            return df[col] / 3600.0
-    # Fallback: collapse resets. Use whatever time-like column exists.
-    src = df["Time"] if "Time" in df.columns else df["Test_Time(s)"]
-    deltas = src.diff().fillna(0).clip(lower=0)
-    return deltas.cumsum() / 3600.0
 
 
 def _plot_voltage_time(
@@ -321,12 +288,12 @@ def _plot_voltage_time(
     if ax is None:
         fig, ax = plt.subplots(figsize=(9, 5))
     else:
-        fig = ax.figure
+        # ax belongs to a top-level Figure (never a SubFigure) in this app.
+        fig = ax.figure  # type: ignore[assignment]
     for it in items:
         label = it["label"]
-        df = raw[label]
-        t = _cumulative_time_hours(df)
-        ax.plot(t, df["Voltage"], label=label, color=colors[label], lw=0.8)
+        s = voltage_time_series(raw[label])
+        ax.plot(s.x, s.y, label=label, color=colors[label], lw=0.8)
     ax.set_xlabel("Time (h)")
     ax.set_ylabel("Voltage (V)")
     ax.set_title(title or "Voltage vs time")
@@ -370,11 +337,12 @@ def plot_cell(
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 5))
     else:
-        fig = ax.figure
+        # ax belongs to a top-level Figure (never a SubFigure) in this app.
+        fig = ax.figure  # type: ignore[assignment]
 
     if mode == "voltage_time":
-        t = _cumulative_time_hours(df)
-        ax.plot(t, df["Voltage"], lw=0.8)
+        s = voltage_time_series(df)
+        ax.plot(s.x, s.y, lw=0.8)
         ax.set_xlabel("Time (h)")
         ax.set_ylabel("Voltage (V)")
         ax.set_title(title or f"{item_id} — V vs t")
@@ -383,22 +351,17 @@ def plot_cell(
         return fig
 
     if mode == "voltage_capacity":
-        filt = filter_by_cycle(df, cycles) if cycles is not None else df
-        cycle_ids = sorted(filt["full cycle"].dropna().unique())
-        if not cycle_ids:
+        traces = voltage_capacity_series(df, cycles)
+        if not traces:
             raise RuntimeError("No cycles to plot")
         cmap = plt.colormaps["viridis"]
-        n = len(cycle_ids)
-        for i, cid in enumerate(cycle_ids):
-            cyc = filt[filt["full cycle"] == cid]
-            color = cmap(i / max(1, n - 1))
-            x, y = split_half_cycles(cyc, "Capacity", "Voltage")
-            ax.plot(x, y, color=color, lw=1.0, label=f"cycle {int(cid)}")
+        for t in traces:
+            ax.plot(t.x, t.y, color=cmap(t.frac), lw=1.0, label=f"cycle {t.cycle_id}")
         ax.set_xlabel("Capacity (mAh)")
         ax.set_ylabel("Voltage (V)")
         ax.set_title(title or f"{item_id} — V vs Q")
         ax.grid(alpha=0.3)
-        if n <= 12:
+        if len(traces) <= 12:
             ax.legend(fontsize=8, loc="best")
         fig.tight_layout()
         return fig
@@ -406,16 +369,9 @@ def plot_cell(
     if mode == "dqdv":
         if cycles is None:
             raise ValueError("mode='dqdv' on plot_cell requires cycles=...")
-        filt = filter_by_cycle(df, cycles)
-        diff = compute_dqdv(filt, mode="dQ/dV")
-        cycle_ids = sorted(diff["full cycle"].unique())
         cmap = plt.colormaps["viridis"]
-        n = len(cycle_ids)
-        for i, cid in enumerate(cycle_ids):
-            seg = diff[diff["full cycle"] == cid]
-            color = cmap(i / max(1, n - 1))
-            x, y = split_half_cycles(seg, "voltage (V)", "dQ/dV (mA/V)")
-            ax.plot(x, y, color=color, lw=1.0, label=f"cycle {int(cid)}")
+        for t in dqdv_series(df, cycles):
+            ax.plot(t.x, t.y, color=cmap(t.frac), lw=1.0, label=f"cycle {t.cycle_id}")
         ax.set_xlabel("Voltage (V)")
         ax.set_ylabel("dQ/dV (mA/V)")
         ax.set_title(title or f"{item_id} — dQ/dV")

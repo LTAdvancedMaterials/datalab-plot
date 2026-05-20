@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-
 XRD_EXTENSIONS = (".xy", ".xye", ".dat", ".xrdml")
 _STARTEND_REGEX = (
     r"<startPosition>(\d+\.\d+)</startPosition>\s+<endPosition>(\d+\.\d+)</endPosition>"

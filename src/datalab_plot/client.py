@@ -11,7 +11,6 @@ from datalab_api import DatalabClient
 
 from .cache import cache_dir
 
-
 FileMeta = dict
 FilePredicate = Callable[[FileMeta], bool]
 

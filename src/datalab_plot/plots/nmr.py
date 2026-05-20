@@ -51,7 +51,8 @@ def plot_nmr(
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 5))
     else:
-        fig = ax.figure
+        # ax belongs to a top-level Figure (never a SubFigure) in this app.
+        fig = ax.figure  # type: ignore[assignment]
 
     y = df["intensity_per_scan"] if normalize else df["intensity"]
     ax.plot(df["ppm"], y, lw=0.8)

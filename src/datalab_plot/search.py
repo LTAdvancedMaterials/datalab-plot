@@ -1,9 +1,13 @@
 """Discover items on a datalab instance."""
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 
 from .client import DatalabPlotClient, _resolve_client
+
+logger = logging.getLogger(__name__)
 
 
 def _format_constituents(value: object) -> str:
@@ -87,6 +91,11 @@ def find_cells(
                 try:
                     result = c.client.get_items(item_type=t)
                 except Exception:
+                    # One bad item_type shouldn't sink the whole search; log
+                    # and move on so the other types still return.
+                    logger.warning(
+                        "get_items failed for item_type=%r; skipping", t, exc_info=True
+                    )
                     continue
                 if not isinstance(result, list):
                     continue
