@@ -13,6 +13,9 @@ dist/
 .venv/
 venv/
 env/
+.env
+.env.local
+
 
 # Locally cached data + outputs (regenerated on demand)
 cache/
