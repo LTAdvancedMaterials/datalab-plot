@@ -68,7 +68,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _cmd_list(args: argparse.Namespace) -> int:
     types = tuple(t.strip() for t in args.item_type.split(",") if t.strip())
-    df = find_cells(query=args.query, item_type=types, limit=args.limit)
+    # enrich=False: `list` prints only summary columns, so skip the
+    # per-cell full-document fetches that fill electrode / electrolyte.
+    df = find_cells(query=args.query, item_type=types, limit=args.limit, enrich=False)
     if df.empty:
         print("(no items)", file=sys.stderr)
         return 0

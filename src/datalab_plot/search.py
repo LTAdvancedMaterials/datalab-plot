@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 
 from .client import DatalabPlotClient, _resolve_client
 
 logger = logging.getLogger(__name__)
+
+# How many full-item documents to fetch in parallel when enriching cells.
+_ENRICH_WORKERS = 8
 
 
 def _format_constituents(value: object) -> str:
@@ -49,13 +53,71 @@ def _row_from_item(it: dict) -> dict:
         "name": it.get("name") or "",
         "refcode": it.get("refcode") or "",
         "type": it.get("type") or "",
-        "chemform": it.get("chemform") or "",
+        # datalab names this `characteristic_chemical_formula` on both the
+        # list summary and the full item — there is no `chemform` key.
+        "chemform": it.get("characteristic_chemical_formula") or it.get("chemform") or "",
         "positive_electrode": _format_constituents(it.get("positive_electrode")),
         "negative_electrode": _format_constituents(it.get("negative_electrode")),
         "electrolyte": _format_constituents(it.get("electrolyte")),
-        "last_modified": it.get("last_modified") or "",
+        # The list endpoint carries `date`; the full item carries `last_modified`.
+        "last_modified": it.get("last_modified") or it.get("date") or "",
         "collections": coll_names,
     }
+
+
+def _as_item_list(result: object) -> list:
+    """Coerce a ``get_items`` / ``search_items`` response into a list of items.
+
+    ``datalab_api.get_items`` returns the raw endpoint dict (e.g.
+    ``{"samples": [...], "status": ...}``) when the response shape doesn't
+    match the keys it knows how to unwrap — so handle that here rather than
+    silently dropping the items.
+    """
+    if isinstance(result, list):
+        return result
+    if isinstance(result, dict):
+        for key in ("items", "samples"):
+            value = result.get(key)
+            if isinstance(value, list):
+                return value
+    return []
+
+
+def _enrich_cells(client: DatalabPlotClient, items: list) -> list:
+    """Replace cell summary dicts with their full item documents.
+
+    The ``/samples`` list and ``/search-items`` endpoints omit the cell
+    construction fields (``positive_electrode`` / ``negative_electrode`` /
+    ``electrolyte``) — only the per-item ``get-item-data`` endpoint carries
+    them. Fetch the full document for each ``type == "cells"`` item, in
+    parallel. Non-cell items and any fetch that fails are left unchanged.
+    """
+    cells = [
+        (i, it)
+        for i, it in enumerate(items)
+        if isinstance(it, dict) and it.get("type") == "cells" and it.get("item_id")
+    ]
+    if not cells:
+        return items
+
+    def _fetch(idx_item: tuple[int, dict]) -> tuple[int, dict]:
+        idx, it = idx_item
+        try:
+            return idx, client.client.get_item(item_id=it["item_id"])
+        except Exception:
+            logger.warning(
+                "Could not fetch full item %s for enrichment; "
+                "construction fields will be blank",
+                it.get("item_id"),
+                exc_info=True,
+            )
+            return idx, it
+
+    enriched = list(items)
+    with ThreadPoolExecutor(max_workers=_ENRICH_WORKERS) as pool:
+        for idx, full in pool.map(_fetch, cells):
+            enriched[idx] = full
+    return enriched
 
 
 def find_cells(
@@ -64,6 +126,7 @@ def find_cells(
     item_type: str | tuple[str, ...] = ("samples", "cells"),
     limit: int | None = None,
     client: DatalabPlotClient | None = None,
+    enrich: bool = True,
 ) -> pd.DataFrame:
     """List items available to the authenticated user as a DataFrame.
 
@@ -72,17 +135,20 @@ def find_cells(
 
     Returned columns: ``item_id``, ``name``, ``refcode``, ``type``,
     ``chemform``, ``positive_electrode``, ``negative_electrode``,
-    ``electrolyte``, ``last_modified``, ``collections``. The
-    construction fields (electrodes / electrolyte) are populated
-    best-effort — they appear only when the endpoint's response
-    carries them.
+    ``electrolyte``, ``last_modified``, ``collections``.
+
+    ``enrich`` (default ``True``): the datalab list / search endpoints do
+    not return cell construction fields (electrodes / electrolyte), so each
+    ``cells`` item is fetched individually to fill them in. This costs one
+    extra request per cell (issued in parallel). Pass ``enrich=False`` to
+    skip it when those columns aren't needed — the columns are then blank.
     """
     types = (item_type,) if isinstance(item_type, str) else tuple(item_type)
 
     c, owns = _resolve_client(client)
     try:
         if query:
-            items = c.client.search_items(query, item_types=types)
+            items = list(_as_item_list(c.client.search_items(query, item_types=types)))
         else:
             # search_items takes multiple types in one call; get_items does not.
             items = []
@@ -97,9 +163,7 @@ def find_cells(
                         "get_items failed for item_type=%r; skipping", t, exc_info=True
                     )
                     continue
-                if not isinstance(result, list):
-                    continue
-                for entry in result:
+                for entry in _as_item_list(result):
                     if not isinstance(entry, dict):
                         continue
                     iid = entry.get("item_id") or entry.get("immutable_id")
@@ -108,12 +172,14 @@ def find_cells(
                     if iid:
                         seen.add(iid)
                     items.append(entry)
+
+        if limit:
+            items = items[:limit]
+        if enrich:
+            items = _enrich_cells(c, items)
     finally:
         if owns:
             c.close()
-
-    if limit:
-        items = items[:limit]
 
     rows = [_row_from_item(it) for it in items if isinstance(it, dict)]
     return pd.DataFrame(
