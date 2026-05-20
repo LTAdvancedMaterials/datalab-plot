@@ -766,7 +766,11 @@ def _sidebar_connection() -> DatalabPlotClient | None:
         # Auto-connect when credentials are already in the environment (.env file).
         env_url = os.environ.get("DATALAB_URL", "")
         env_key = os.environ.get("DATALAB_API_KEY", "")
-        if env_url and env_key and not st.session_state.get("auto_connect_failed"):
+        if (
+            env_url and env_key
+            and not st.session_state.get("auto_connect_failed")
+            and not st.session_state.get("signed_out")
+        ):
             try:
                 c = DatalabPlotClient(env_url)
                 c.__enter__()
@@ -799,6 +803,7 @@ def _sidebar_connection() -> DatalabPlotClient | None:
             else:
                 os.environ["DATALAB_API_KEY"] = api_key
                 st.session_state.pop("auto_connect_failed", None)
+                st.session_state.pop("signed_out", None)
                 try:
                     c = DatalabPlotClient(url)
                     c.__enter__()
@@ -839,6 +844,11 @@ def _sidebar_connection() -> DatalabPlotClient | None:
                         "ui_plot_width", "ui_plot_height",
                     ):
                         st.session_state.pop(k, None)
+                # Suppress auto-connect — otherwise the env-var credentials
+                # (incl. the key written by a manual Connect) would sign the
+                # user straight back in on the next rerun. Cleared when the
+                # user explicitly clicks Connect again.
+                st.session_state["signed_out"] = True
                 st.rerun()
     return client
 
