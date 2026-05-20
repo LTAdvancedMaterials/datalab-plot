@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-
 UVVIS_EXTENSIONS = (".txt", ".raw8.txt")
 
 

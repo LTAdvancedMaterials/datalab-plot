@@ -10,6 +10,7 @@ import navani.echem as ec
 import numpy as np
 import pandas as pd
 
+
 # Suppress the per-file INFO chatter from NewareNDA (.nda/.ndax). Two
 # independent defenses, because NewareNDA's read() resets the logger level on
 # every call from its log_level='INFO' default, and any rich/pydatalab-style
@@ -243,7 +244,7 @@ def split_by_status(
         xs = run_df[x_col].to_numpy()
         ys = run_df[y_col].to_numpy()
         sval = str(run_df[status_col].iloc[0])
-        if prev_last_x is not None:
+        if prev_last_x is not None and prev_last_y is not None:
             xs = np.concatenate(([prev_last_x], xs))
             ys = np.concatenate(([prev_last_y], ys))
         runs.append((xs, ys, sval))

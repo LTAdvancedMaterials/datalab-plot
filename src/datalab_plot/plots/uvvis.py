@@ -56,7 +56,8 @@ def plot_uvvis(
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 5))
     else:
-        fig = ax.figure
+        # ax belongs to a top-level Figure (never a SubFigure) in this app.
+        fig = ax.figure  # type: ignore[assignment]
 
     for s in samples:
         sample_df = parse_uvvis_txt(name_to_path[s["name"]])

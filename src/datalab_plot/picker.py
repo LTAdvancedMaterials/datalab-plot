@@ -90,8 +90,9 @@ def pick_cells(
             "<div style='font-size:0.9em; opacity:0.75; margin-bottom:4px;'>"
             "Click a row to select. <kbd>Cmd</kbd>/<kbd>Ctrl</kbd>-click adds rows; "
             "<kbd>Shift</kbd>-click selects a range. "
-            "Highlighted rows below are exactly what <code>picker.selected</code> returns &mdash; "
-            "re-run your <code>plot_cycles(picker.selected)</code> cell after changing the selection."
+            "Highlighted rows below are exactly what <code>picker.selected</code> "
+            "returns &mdash; re-run your <code>plot_cycles(picker.selected)</code> "
+            "cell after changing the selection."
             "</div>"
         )
     )
@@ -113,7 +114,10 @@ def pick_cells(
         # unboundedly when many cells are picked.
         cap = 10
         head = ", ".join(f"<code>{iid}</code>" for iid in sel[:cap])
-        suffix = "" if len(sel) <= cap else f" <span style='opacity:0.6;'>+{len(sel) - cap} more</span>"
+        extra = len(sel) - cap
+        suffix = (
+            "" if extra <= 0 else f" <span style='opacity:0.6;'>+{extra} more</span>"
+        )
         return (
             "<div style='font-size:0.9em; margin-top:4px; "
             "white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'>"
