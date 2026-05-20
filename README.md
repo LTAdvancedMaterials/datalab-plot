@@ -123,7 +123,9 @@ is auto-deselected and an error banner explains why.
 from datalab_plot import find_cells
 
 df = find_cells(query="NMC811", limit=50)        # → pandas DataFrame
-# columns: item_id, name, refcode, type, chemform, last_modified, collections
+# columns: item_id, name, refcode, type, chemform,
+#          positive_electrode, negative_electrode, electrolyte,
+#          last_modified, collections
 ```
 
 ### Multi-cell comparison
@@ -310,9 +312,10 @@ src/datalab_plot/
   client.py            DatalabPlotClient: size-checked file cache
   cache.py             Cache directory resolution
   search.py            find_cells (search / list)
+  series.py            Render-agnostic plot-series builders
   picker.py            ipywidgets multi-select for Jupyter
   cli.py               argparse entry point (incl. `gui` subcommand)
-  gui.py               Streamlit app (Plotly figures)
+  gui/                 Streamlit app, Plotly figures (multi-module package)
   parsers/
     echem.py           Navani wrapper + dQ/dV + cycle-split helpers
     nmr.py             Bruker + JCAMP
@@ -321,10 +324,19 @@ src/datalab_plot/
   plots/
     echem.py           plot_cycles + plot_cell (matplotlib)
     nmr.py, xrd.py, uvvis.py
+tests/                 pytest suite (synthetic data; run via `make check`)
 notebooks/
   starter.ipynb        End-to-end demo notebook
 ```
 
+`parsers/` and `series.py` are pure (no I/O, no Streamlit) — `series.py` is
+the shared data layer feeding both the matplotlib (`plots/`) and Plotly
+(`gui/`) renderers. See [CLAUDE.md](CLAUDE.md) for the contributor guide.
+
 ## License
 
-TBD.
+Released under the [MIT License](LICENSE) — © 2026 Lightning Tree.
+
+You may use, copy, modify, and distribute this software freely, provided the
+copyright notice and license text are retained. The software is provided
+"as is", without warranty of any kind.
