@@ -78,6 +78,12 @@ Both are read at runtime. The GUI prompts for the key interactively if it
 isn't in the environment; the library + CLI raise a clear error if either
 is missing.
 
+The GUI also **remembers the key** after a successful connection: it
+saves it per-instance-URL to `credentials.json` in the platform
+user-config directory (owner-only file permissions), so you don't have
+to paste it in every restart. Use *Forget saved key* in the sidebar's
+Connection panel to clear it.
+
 `DATALAB_PLOT_CACHE` (optional) overrides the local file cache directory.
 Default: `./cache/datalab_plot/` when run from a repo checkout, otherwise
 the platform user cache (e.g. `~/.cache/datalab-plot/` on Linux).

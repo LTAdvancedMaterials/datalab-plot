@@ -1,12 +1,16 @@
 """Streamlit GUI for datalab-plot. Launch via ``datalab-plot gui``."""
 from __future__ import annotations
 
-import io
+import json
 import os
+import stat
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import matplotlib
 import pandas as pd
+import platformdirs
 import plotly.graph_objects as go
 from dotenv import load_dotenv
 from plotly.subplots import make_subplots
@@ -31,13 +35,30 @@ from datalab_plot.plots.echem import (  # noqa: E402
     _assign_colors,
     _cumulative_time_hours,
     _normalise_items,
-    plot_cycles,
 )
 from datalab_plot.search import find_cells  # noqa: E402
 
 
 DEFAULT_URL = "https://datalab.lightningtree.ai/"
-PICKER_COLUMNS = ("Select", "item_id", "name", "chemform", "label", "group", "color")
+
+# Snapshot the .env / shell credentials at import time, BEFORE any in-app
+# Connect can mutate os.environ. The datalab_api client only reads the key
+# from os.environ (process-global), so without this snapshot a manual
+# Connect to instance B would leave key B in os.environ, and a later
+# auto-connect (e.g. after reopening the browser → fresh session) would
+# pair the .env URL (instance A) with the stale key B — "connected" but
+# broken. Auto-connect uses ONLY this immutable snapshot.
+# .strip() guards against a trailing newline / whitespace in the .env file
+# (or a stray space from a copy-paste): the datalab client only strips
+# surrounding quotes, not whitespace, so an un-stripped key is sent as
+# `DATALAB-API-KEY: <key>\n` and silently rejected by the server.
+_ENV_URL = os.environ.get("DATALAB_URL", "").strip()
+_ENV_KEY = os.environ.get("DATALAB_API_KEY", "").strip()
+PICKER_COLUMNS = (
+    "Select", "item_id", "name",
+    "positive_electrode", "negative_electrode", "electrolyte",
+    "label", "group", "color",
+)
 
 # Common cycler step-type / state values mapped to colours. Anything not in
 # the map falls back to a deterministic hash-based tab20 colour, so unknown
@@ -81,12 +102,6 @@ def _rgba_to_css(c: Any) -> str:
 
     r, g, b, a = to_rgba(c)
     return f"rgba({int(r * 255)}, {int(g * 255)}, {int(b * 255)}, {a:.3f})"
-
-
-def _fig_to_png_bytes(fig) -> bytes:
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=140, bbox_inches="tight")
-    return buf.getvalue()
 
 
 def _empty_picker_df() -> pd.DataFrame:
@@ -140,7 +155,9 @@ def _build_initial_df(results: pd.DataFrame, prior_selected: dict[str, dict[str,
                 "Select": bool(prev.get("Select", False)),
                 "item_id": iid,
                 "name": r.get("name", "") or "",
-                "chemform": r.get("chemform", "") or "",
+                "positive_electrode": r.get("positive_electrode", "") or "",
+                "negative_electrode": r.get("negative_electrode", "") or "",
+                "electrolyte": r.get("electrolyte", "") or "",
                 "label": prev.get("label") or (r.get("name") or iid),
                 "group": prev.get("group", "") or "",
                 "color": prev.get("color", "") or "",
@@ -154,7 +171,9 @@ def _build_initial_df(results: pd.DataFrame, prior_selected: dict[str, dict[str,
                 "Select": True,
                 "item_id": iid,
                 "name": prev.get("name", "") or "",
-                "chemform": prev.get("chemform", "") or "",
+                "positive_electrode": prev.get("positive_electrode", "") or "",
+                "negative_electrode": prev.get("negative_electrode", "") or "",
+                "electrolyte": prev.get("electrolyte", "") or "",
                 "label": prev.get("label") or iid,
                 "group": prev.get("group", "") or "",
                 "color": prev.get("color", "") or "",
@@ -311,19 +330,126 @@ def _axis_series(df: pd.DataFrame, axis: str) -> pd.Series:
 # single dispatch can serve both Plot-click and live-update reruns.
 # ---------------------------------------------------------------------------
 
-def _layout(fig: go.Figure, height: int, title: str | None = None) -> go.Figure:
+@dataclass(frozen=True)
+class PlotStyle:
+    """User-tunable plot appearance (set in the Plot layout expander).
+
+    Frozen so it's hashable — it goes straight into the live-refresh
+    change-detection signature.
+
+    Axis limits are ``None`` for auto-range; a manual range is applied
+    only when *both* bounds of an axis are given.
+    """
+    border: bool = True            # box outline around the plot area
+    grid_x: bool = True            # vertical gridlines (x-axis grid)
+    grid_y: bool = True            # horizontal gridlines (y-axis grid)
+    legend_mode: str = "below"     # "below" | "overlaid" | "none"
+    font_size: int = 13
+    colorbar: bool = False         # V-vs-Q: per-cell cycle-number colorbar
+    x_min: float | None = None
+    x_max: float | None = None
+    y_min: float | None = None
+    y_max: float | None = None
+    y2_min: float | None = None
+    y2_max: float | None = None
+
+
+def _mpl_colorscale(cmap, n: int = 16) -> list[list]:
+    """Sample a matplotlib colormap into a plotly [[frac, css], …] colorscale."""
+    return [[i / (n - 1), _rgba_to_css(cmap(i / (n - 1)))] for i in range(n)]
+
+
+def _parse_limit(value: str | None) -> float | None:
+    """Parse an axis-limit text field. Blank / unparseable → None (auto)."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _layout(
+    fig: go.Figure, height: int, title: str | None = None,
+    style: PlotStyle | None = None, *, secondary_y: bool = False,
+) -> go.Figure:
+    style = style or PlotStyle()
+    legend_cfg = {
+        # yanchor="top": the legend's TOP edge is pinned just below the
+        # x-axis title, so when it wraps to a second row the extra rows
+        # grow *downward* (into the auto-expanding bottom margin) rather
+        # than upward over the axis title.
+        "below": dict(
+            orientation="h", yanchor="top", y=-0.22, xanchor="center", x=0.5,
+        ),
+        # Inset into the plot body (corner at 0.97/0.97 paper coords) so the
+        # legend box sits clear of the mirrored border rather than straddling
+        # it.
+        "overlaid": dict(
+            orientation="v", yanchor="top", y=0.97, xanchor="right", x=0.97,
+            bgcolor="rgba(255,255,255,0.75)",
+            bordercolor="rgba(0,0,0,0.2)", borderwidth=1,
+        ),
+    }.get(style.legend_mode)
+    if legend_cfg is not None:
+        # Legend text nominally inherits layout.font, but set it explicitly
+        # so the Text-size control resizes legend entries too.
+        legend_cfg["font"] = dict(size=style.font_size)
+    if secondary_y and style.legend_mode == "overlaid":
+        # A dual-Y figure shrinks the x-axis domain (e.g. to [0, 0.94]) to
+        # make room for the right-hand axis. Legend x is in paper coords
+        # where 1.0 is the figure edge, so the default 0.97 lands in the
+        # gap *outside* the axes panel. Re-anchor to the domain's right edge.
+        dom = fig.layout.xaxis.domain
+        right = dom[1] if dom is not None else 1.0
+        legend_cfg["x"] = right - 0.03
     fig.update_layout(
         title=title or None,
         template="plotly_white",
-        margin=dict(l=60, r=20, t=50 if title else 30, b=80),
-        legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+        margin=dict(
+            l=60, r=20, t=50 if title else 30,
+            b=80 if style.legend_mode == "below" else 40,
+        ),
+        showlegend=(style.legend_mode != "none"),
+        legend=legend_cfg,
         hovermode="closest",
         height=height,
+        # layout.font is the global default; tick labels inherit it. Axis
+        # titles and the plot title carry their own font objects, so set
+        # those explicitly too — otherwise the Text-size control only
+        # resizes tick labels and the legend.
+        font=dict(size=style.font_size),
+        title_font=dict(size=style.font_size + 3),
     )
+    fig.update_xaxes(
+        showgrid=style.grid_x,
+        showline=style.border, mirror=style.border,
+        linecolor="#444444", linewidth=1,
+        tickfont=dict(size=style.font_size),
+        title_font=dict(size=style.font_size),
+    )
+    fig.update_yaxes(
+        showgrid=style.grid_y,
+        showline=style.border, mirror=style.border,
+        linecolor="#444444", linewidth=1,
+        tickfont=dict(size=style.font_size),
+        title_font=dict(size=style.font_size),
+    )
+    # Manual axis limits — applied only when both bounds of an axis are
+    # given. The primary y-range may leak onto a secondary axis in dual-Y
+    # figures; _plotly_xy re-scopes it afterwards.
+    if style.x_min is not None and style.x_max is not None:
+        fig.update_xaxes(range=[style.x_min, style.x_max])
+    if style.y_min is not None and style.y_max is not None:
+        fig.update_yaxes(range=[style.y_min, style.y_max])
     return fig
 
 
-def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0) -> go.Figure:
+def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0,
+                    style: PlotStyle | None = None) -> go.Figure:
     fig = make_subplots(
         rows=1,
         cols=2,
@@ -359,7 +485,7 @@ def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0) -> go.
     fig.update_xaxes(title_text="Cycle number", row=1, col=2)
     fig.update_yaxes(title_text="Discharge capacity (mAh)", row=1, col=1)
     fig.update_yaxes(title_text="Coulombic efficiency (%)", row=1, col=2, range=[90, 102])
-    return _layout(fig, height)
+    return _layout(fig, height, style=style)
 
 
 # Perceptually uniform sequential colormaps; one per cell, cycled if more
@@ -367,14 +493,20 @@ def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0) -> go.
 PER_CELL_CMAPS = ("viridis", "plasma", "inferno", "magma", "cividis")
 
 
-def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.0) -> go.Figure:
+def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.0,
+                             style: PlotStyle | None = None) -> go.Figure:
     """V-Q for every cycle of every cell. Each cell gets its own perceptually
     uniform colormap; cycles are coloured along that gradient (early = light,
     late = dark for viridis-family). The `colors` param is unused here.
+
+    When ``style.colorbar`` is set, a per-cell cycle-number colorbar is added
+    on the right.
     """
     import matplotlib.pyplot as _plt  # local import to keep cold-start light
 
+    show_cbar = bool(style and style.colorbar)
     fig = go.Figure()
+    n_colorbars = 0
     for cell_idx, it in enumerate(items):
         label = it["label"]
         if label not in raw:
@@ -419,12 +551,40 @@ def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.
                 )
             )
 
+        if show_cbar:
+            # Invisible marker trace carrying the cell's colormap as a
+            # plotly colorscale → renders a cycle-number colorbar. One per
+            # cell, staggered along the right edge.
+            fig.add_trace(
+                go.Scatter(
+                    x=[None], y=[None], mode="markers",
+                    marker=dict(
+                        colorscale=_mpl_colorscale(cmap),
+                        cmin=cycle_ids[0], cmax=cycle_ids[-1],
+                        color=[cycle_ids[0]],
+                        showscale=True,
+                        colorbar=dict(
+                            title=dict(text=f"{label}<br>cycle", side="right"),
+                            len=0.92, thickness=14,
+                            x=1.02 + 0.16 * n_colorbars,
+                        ),
+                    ),
+                    hoverinfo="skip", showlegend=False,
+                )
+            )
+            n_colorbars += 1
+
     fig.update_xaxes(title_text="Capacity (mAh)")
     fig.update_yaxes(title_text="Voltage (V)")
-    return _layout(fig, height, title="Voltage vs capacity, all cycles")
+    fig = _layout(fig, height, title="Voltage vs capacity, all cycles", style=style)
+    if n_colorbars:
+        # Widen the right margin so the colorbars don't overlap the plot.
+        fig.update_layout(margin=dict(r=20 + 90 * n_colorbars))
+    return fig
 
 
-def _plotly_dqdv(items, raw, colors, cycle, height, width_scale: float = 1.0) -> go.Figure:
+def _plotly_dqdv(items, raw, colors, cycle, height, width_scale: float = 1.0,
+                 style: PlotStyle | None = None) -> go.Figure:
     fig = go.Figure()
     for it in items:
         label = it["label"]
@@ -447,10 +607,11 @@ def _plotly_dqdv(items, raw, colors, cycle, height, width_scale: float = 1.0) ->
         )
     fig.update_xaxes(title_text="Voltage (V)")
     fig.update_yaxes(title_text="dQ/dV (mA/V)")
-    return _layout(fig, height, title=f"dQ/dV, cycle {cycle}")
+    return _layout(fig, height, title=f"dQ/dV, cycle {cycle}", style=style)
 
 
-def _plotly_voltage_time(items, raw, colors, height, width_scale: float = 1.0) -> go.Figure:
+def _plotly_voltage_time(items, raw, colors, height, width_scale: float = 1.0,
+                         style: PlotStyle | None = None) -> go.Figure:
     fig = go.Figure()
     for it in items:
         label = it["label"]
@@ -468,7 +629,7 @@ def _plotly_voltage_time(items, raw, colors, height, width_scale: float = 1.0) -
         )
     fig.update_xaxes(title_text="Time (h)")
     fig.update_yaxes(title_text="Voltage (V)")
-    return _layout(fig, height, title="Voltage vs time")
+    return _layout(fig, height, title="Voltage vs time", style=style)
 
 
 def _axis_col_in(df: pd.DataFrame, axis: str) -> tuple[pd.DataFrame, str]:
@@ -492,6 +653,7 @@ def _plotly_xy(
     x_axis: str, y_axis: str, y2_axis: str, height: int,
     color_by_status: bool = False,
     width_scale: float = 1.0,
+    style: PlotStyle | None = None,
 ) -> go.Figure:
     """Generic X-Y plot with axes chosen from AXIS_OPTIONS.
 
@@ -510,6 +672,15 @@ def _plotly_xy(
 
     ``width_scale`` multiplies every line width.
     """
+    # "if available": if status colouring was requested but none of the
+    # selected cells actually carry a step column, fall back to per-cell
+    # colouring rather than drawing everything as undifferentiated grey.
+    if color_by_status and not any(
+        it["label"] in raw and detect_status_column(raw[it["label"]]) is not None
+        for it in items
+    ):
+        color_by_status = False
+
     has_y2 = y2_axis and y2_axis != "none"
     needs_gaps = (
         _axis_resets(x_axis)
@@ -655,7 +826,21 @@ def _plotly_xy(
         ytitle = ylabel.split(" (")[0]
         suffix = " (by status)" if color_by_status else ""
         title_text = f"{ytitle} vs {xtitle}{suffix}"
-    return _layout(fig, height, title=title_text)
+    fig = _layout(fig, height, title=title_text, style=style, secondary_y=has_y2)
+    if has_y2:
+        # The secondary y-axis would otherwise draw its own horizontal
+        # gridlines, offset from the primary axis's — a confusing double
+        # set. Keep only the primary axis's grid.
+        fig.update_yaxes(showgrid=False, secondary_y=True)
+        # Re-scope the secondary y-axis range: _layout's global y-range
+        # (style.y_min/y_max) leaks onto it, so apply the y2 limits — or
+        # restore autorange — explicitly.
+        if style is not None:
+            if style.y2_min is not None and style.y2_max is not None:
+                fig.update_yaxes(range=[style.y2_min, style.y2_max], secondary_y=True)
+            elif style.y_min is not None and style.y_max is not None:
+                fig.update_yaxes(autorange=True, secondary_y=True)
+    return fig
 
 
 def _build_plotly(
@@ -670,23 +855,28 @@ def _build_plotly(
     y2_axis: str = "none",
     color_by_status: bool = False,
     width_scale: float = 1.0,
+    style: PlotStyle | None = None,
 ) -> go.Figure:
     items = _normalise_items(payload)
     colors = _assign_colors(items)
     if mode == "summary":
-        fig = _plotly_summary(items, raw, colors, height, width_scale=width_scale)
+        fig = _plotly_summary(items, raw, colors, height,
+                              width_scale=width_scale, style=style)
     elif mode == "voltage_capacity":
-        fig = _plotly_voltage_capacity(items, raw, colors, height, width_scale=width_scale)
+        fig = _plotly_voltage_capacity(items, raw, colors, height,
+                                       width_scale=width_scale, style=style)
     elif mode == "dqdv":
-        fig = _plotly_dqdv(items, raw, colors, int(cycle or 1), height, width_scale=width_scale)
+        fig = _plotly_dqdv(items, raw, colors, int(cycle or 1), height,
+                           width_scale=width_scale, style=style)
     elif mode == "voltage_time":
         # Kept for backwards compatibility (cached figures, library parity).
         # In the GUI, V vs t is reached via mode="xy" with x=time, y=voltage.
-        fig = _plotly_voltage_time(items, raw, colors, height, width_scale=width_scale)
+        fig = _plotly_voltage_time(items, raw, colors, height,
+                                   width_scale=width_scale, style=style)
     elif mode == "xy":
         fig = _plotly_xy(
             items, raw, colors, x_axis, y_axis, y2_axis, height,
-            color_by_status=color_by_status, width_scale=width_scale,
+            color_by_status=color_by_status, width_scale=width_scale, style=style,
         )
     else:
         raise ValueError(f"Unknown mode {mode!r}")
@@ -756,62 +946,241 @@ def _raw_keyed_by_label(payload: dict[str, dict[str, Any]]) -> dict[str, pd.Data
 
 
 # ---------------------------------------------------------------------------
+# Credential persistence.
+#
+# The datalab_api client only reads the key from os.environ, so without a
+# store the GUI forgets every key on restart and auto-connect keeps retrying
+# the (possibly stale) .env key. We persist successful connections to a
+# JSON file in the platform user-config dir — the industry-standard place
+# (cf. `gh`, `aws`, `docker`), keyed by instance URL so each datalab keeps
+# its own key. The file is chmod 0600 (owner read/write only).
+# ---------------------------------------------------------------------------
+
+def _creds_path() -> Path:
+    return Path(platformdirs.user_config_dir("datalab-plot")) / "credentials.json"
+
+
+def _normalize_url(url: str | None) -> str:
+    """Canonical form for use as a credentials-dict key (trailing-slash- and
+    whitespace-insensitive)."""
+    return (url or "").strip().rstrip("/")
+
+
+def _default_creds() -> dict[str, Any]:
+    # auto_connect is the persisted "stay signed out" preference: a browser
+    # refresh starts a fresh Streamlit session (st.session_state is wiped),
+    # so an in-session signed-out flag can't survive one. This disk flag
+    # can. Default True — auto-connect unless the user has signed out.
+    return {"last_url": "", "keys": {}, "auto_connect": True}
+
+
+def _load_creds() -> dict[str, Any]:
+    """Return ``{"last_url": str, "keys": {url: key}, "auto_connect": bool}``;
+    defaults on any read/parse failure (a corrupt file must never break the
+    app)."""
+    try:
+        data = json.loads(_creds_path().read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError, OSError):
+        return _default_creds()
+    if not isinstance(data, dict):
+        return _default_creds()
+    keys = data.get("keys")
+    return {
+        "last_url": data.get("last_url") or "",
+        "keys": keys if isinstance(keys, dict) else {},
+        "auto_connect": data.get("auto_connect", True) is not False,
+    }
+
+
+def _write_creds(data: dict[str, Any]) -> None:
+    """Write the credentials dict to disk, 0600. Best-effort — a read-only
+    config dir must not break the app."""
+    try:
+        path = _creds_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        try:
+            path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600 — owner only
+        except OSError:
+            pass
+    except OSError:
+        pass
+
+
+def _saved_key_for(url: str | None) -> str:
+    return _load_creds()["keys"].get(_normalize_url(url), "")
+
+
+def _save_cred(url: str, api_key: str) -> None:
+    """Persist ``api_key`` for ``url``, record it as the last-used URL, and
+    re-enable auto-connect — a manual connect is an explicit opt back in."""
+    data = _load_creds()
+    norm = _normalize_url(url)
+    if not norm or not api_key:
+        return
+    data["keys"][norm] = api_key.strip()
+    data["last_url"] = norm
+    data["auto_connect"] = True
+    _write_creds(data)
+
+
+def _forget_cred(url: str) -> None:
+    """Drop the stored key for ``url``. Best-effort."""
+    data = _load_creds()
+    norm = _normalize_url(url)
+    if data["keys"].pop(norm, None) is None:
+        return
+    if data.get("last_url") == norm:
+        data["last_url"] = ""
+    _write_creds(data)
+
+
+def _set_auto_connect(enabled: bool) -> None:
+    """Persist the auto-connect preference (keys untouched). Sign-out sets
+    this False so a subsequent browser refresh doesn't silently reconnect."""
+    data = _load_creds()
+    data["auto_connect"] = bool(enabled)
+    _write_creds(data)
+
+
+# ---------------------------------------------------------------------------
 # UI sections
 # ---------------------------------------------------------------------------
+
+def _connect(url: str, api_key: str) -> DatalabPlotClient:
+    """Open an authenticated client for ``(url, api_key)``.
+
+    The datalab_api client only reads the key from ``os.environ`` — which
+    is process-global and would otherwise leak across browser sessions and
+    survive a sign-out. We set it just long enough for construction (the
+    client caches the key internally during ``__init__``), then restore
+    ``os.environ`` to the pristine ``.env`` snapshot.
+
+    The connection is validated with an authenticated request: the client
+    constructor's ``get_info()`` call is unauthenticated, so a wrong key
+    would otherwise produce a false "connected" state.
+
+    ``url`` / ``api_key`` are stripped — a trailing newline or space (very
+    common in a key pulled from ``.env`` or pasted from another app) would
+    otherwise be sent in the auth header and rejected by the server.
+    """
+    url = (url or "").strip()
+    api_key = (api_key or "").strip()
+    os.environ["DATALAB_API_KEY"] = api_key
+    try:
+        c = DatalabPlotClient(url)
+        c.__enter__()
+    finally:
+        # Restore os.environ to the immutable startup snapshot so a
+        # different session's auto-connect can't pick up this key.
+        if _ENV_KEY:
+            os.environ["DATALAB_API_KEY"] = _ENV_KEY
+        else:
+            os.environ.pop("DATALAB_API_KEY", None)
+    # Validate the key — raises RuntimeError on a 401 / bad key.
+    c.client.authenticate()
+    return c
+
+
+def _store_connection(c: DatalabPlotClient) -> None:
+    info = c.client.get_info()
+    st.session_state["client"] = c
+    st.session_state["server_name"] = (
+        info.get("data", {}).get("attributes", {}).get("name")
+        or c.client.datalab_api_url
+    )
+
+
+def _connect_and_store(url: str, api_key: str) -> None:
+    """Open + validate a connection, register it, and persist the key.
+
+    The key is saved only after ``_connect`` succeeds (it raises on a bad
+    key), so a stale key is never written. Persistence itself is
+    best-effort — a read-only config dir won't block a working session.
+    """
+    _store_connection(_connect(url, api_key))
+    try:
+        _save_cred(url, api_key)
+    except OSError:
+        pass
+
 
 def _sidebar_connection() -> DatalabPlotClient | None:
     client: DatalabPlotClient | None = st.session_state.get("client")
 
     if client is None:
-        # Auto-connect when credentials are already in the environment (.env file).
-        env_url = os.environ.get("DATALAB_URL", "")
-        env_key = os.environ.get("DATALAB_API_KEY", "")
+        # Resolve the URL + key to pre-fill and auto-connect with. A key
+        # saved from a previous successful connection wins over the .env
+        # key — that's the whole point: once the user connects with a
+        # fresh key, a stale .env key must stop being retried on restart.
+        # The .env key is used only as a fallback, and only for the URL it
+        # belongs to.
+        saved = _load_creds()
+        target_url = saved["last_url"] or _ENV_URL or DEFAULT_URL
+        auto_key = _saved_key_for(target_url)
+        # Track where the auto-connect key came from so a failure message
+        # can name the real source — "saved" (this app's credentials.json)
+        # vs. "env" (the DATALAB_API_KEY environment variable the GUI
+        # process inherited). Those need different fixes.
+        key_source = "saved" if auto_key else ""
+        if not auto_key and _normalize_url(target_url) == _normalize_url(_ENV_URL):
+            auto_key = _ENV_KEY
+            key_source = "env"
+
         if (
-            env_url and env_key
+            target_url and auto_key
+            and saved["auto_connect"]
             and not st.session_state.get("auto_connect_failed")
             and not st.session_state.get("signed_out")
         ):
             try:
-                c = DatalabPlotClient(env_url)
-                c.__enter__()
-                info = c.client.get_info()
-                st.session_state["client"] = c
-                st.session_state["server_name"] = (
-                    info.get("data", {}).get("attributes", {}).get("name", env_url)
-                )
+                _connect_and_store(target_url, auto_key)
                 st.rerun()
             except Exception as exc:
                 st.session_state["auto_connect_failed"] = str(exc)
+                st.session_state["auto_connect_source"] = key_source
 
         st.sidebar.subheader("Connect")
         if st.session_state.get("auto_connect_failed"):
+            src = st.session_state.get("auto_connect_source", "")
+            where = {
+                "saved": (
+                    "the key saved by this app "
+                    f"(`{_creds_path()}`) — use *Connect* with a fresh key "
+                    "to overwrite it"
+                ),
+                "env": (
+                    "the `DATALAB_API_KEY` environment variable inherited "
+                    "from the shell that launched the GUI — unset it (or "
+                    "fix your `.env`) and restart, or just Connect with a "
+                    "fresh key below"
+                ),
+            }.get(src, "the stored key")
             st.sidebar.warning(
-                f"Auto-connect failed: {st.session_state['auto_connect_failed']}\n\n"
-                "Check your `.env` file or connect manually below."
+                f"Auto-connect failed using {where}.\n\n"
+                f"Server said: {st.session_state['auto_connect_failed']}"
             )
-        url = st.sidebar.text_input("Datalab URL", value=env_url or DEFAULT_URL, key="ui_url")
+        url = st.sidebar.text_input("Datalab URL", value=target_url, key="ui_url")
         api_key = st.sidebar.text_input(
             "API key",
-            value=env_key,
+            value=auto_key,
             type="password",
-            help="Held in memory for this session only.",
+            help=(
+                "On a successful connect this key is saved per-URL at "
+                f"`{_creds_path()}` (owner-only file permissions), so you "
+                "won't need to re-enter it next time."
+            ),
             key="ui_api_key",
         )
         if st.sidebar.button("Connect", type="primary", use_container_width=True):
             if not api_key:
                 st.sidebar.error("API key is required.")
             else:
-                os.environ["DATALAB_API_KEY"] = api_key
                 st.session_state.pop("auto_connect_failed", None)
+                st.session_state.pop("auto_connect_source", None)
                 st.session_state.pop("signed_out", None)
                 try:
-                    c = DatalabPlotClient(url)
-                    c.__enter__()
-                    info = c.client.get_info()
-                    st.session_state["client"] = c
-                    st.session_state["server_name"] = (
-                        info.get("data", {}).get("attributes", {}).get("name", url)
-                    )
+                    _connect_and_store(url, api_key)
                     st.rerun()
                 except Exception as exc:
                     st.sidebar.error(f"Connection failed: {exc}")
@@ -827,6 +1196,14 @@ def _sidebar_connection() -> DatalabPlotClient | None:
         if st.button("Forget parsed data", use_container_width=True):
             st.session_state["raw_data"] = {}
             st.rerun()
+        if _saved_key_for(client.client.datalab_api_url):
+            if st.button(
+                "Forget saved key", use_container_width=True,
+                help="Delete the stored API key for this URL. You'll need "
+                     "to re-enter it next time.",
+            ):
+                _forget_cred(client.client.datalab_api_url)
+                st.rerun()
         if st.button("Sign out", type="secondary", use_container_width=True):
             try:
                 client.close()
@@ -842,13 +1219,19 @@ def _sidebar_connection() -> DatalabPlotClient | None:
                         "ui_cycle", "ui_title", "ui_live",
                         "ui_color_by_status", "ui_width_scale",
                         "ui_plot_width", "ui_plot_height",
+                        "ui_border", "ui_grid_x", "ui_grid_y",
+                        "ui_legend_mode", "ui_font_size", "ui_colorbar",
+                        "ui_xmin", "ui_xmax", "ui_ymin", "ui_ymax",
+                        "ui_y2min", "ui_y2max",
                     ):
                         st.session_state.pop(k, None)
-                # Suppress auto-connect — otherwise the env-var credentials
-                # (incl. the key written by a manual Connect) would sign the
-                # user straight back in on the next rerun. Cleared when the
-                # user explicitly clicks Connect again.
+                # Suppress auto-connect — otherwise the saved / env-var key
+                # would sign the user straight back in. The session flag
+                # covers this session; the disk flag survives a browser
+                # refresh (which wipes session_state). Both are cleared
+                # when the user explicitly clicks Connect again.
                 st.session_state["signed_out"] = True
+                _set_auto_connect(False)
                 st.rerun()
     return client
 
@@ -986,7 +1369,15 @@ def _picker_table() -> pd.DataFrame:
             "Select": st.column_config.CheckboxColumn("✓", width=50),
             "item_id": st.column_config.TextColumn("item_id", disabled=True, width="small"),
             "name": st.column_config.TextColumn("name", disabled=True),
-            "chemform": st.column_config.TextColumn("chemform", disabled=True, width="small"),
+            "positive_electrode": st.column_config.TextColumn(
+                "+ electrode", disabled=True, help="Positive electrode constituents"
+            ),
+            "negative_electrode": st.column_config.TextColumn(
+                "− electrode", disabled=True, help="Negative electrode constituents"
+            ),
+            "electrolyte": st.column_config.TextColumn(
+                "electrolyte", disabled=True, help="Electrolyte constituents"
+            ),
             "label": st.column_config.TextColumn("label", help="Used in the plot legend"),
             "group": st.column_config.TextColumn(
                 "group", help="Same group → shared colormap"
@@ -1051,18 +1442,48 @@ def _on_customize_edit() -> None:
     st.session_state["ui_preset"] = "Custom"
 
 
+# Default value for every plot-option widget. Single source of truth for
+# both the first-render seeding and the Reset button.
+PLOT_OPTION_DEFAULTS: dict[str, Any] = {
+    "ui_preset": "V vs t",
+    "ui_mode": "xy",
+    "ui_x_axis": "time",
+    "ui_y_axis": "voltage",
+    "ui_y2_axis": "none",
+    "ui_title": "",
+    "ui_color_by_status": True,
+    "ui_plot_width": 90,
+    "ui_plot_height": 520,
+    "ui_width_scale": 2.0,
+    "ui_legend_mode": "below",
+    "ui_font_size": 13,
+    "ui_colorbar": False,
+    "ui_border": True,
+    "ui_grid_x": True,
+    "ui_grid_y": True,
+    "ui_xmin": "", "ui_xmax": "", "ui_ymin": "", "ui_ymax": "",
+    "ui_y2min": "", "ui_y2max": "",
+}
+
+
+def _cb_reset_options() -> None:
+    """Reset every plot-option widget to its default. Runs as a button
+    on_click callback, so it executes before the widgets re-instantiate —
+    writing their session_state keys here is allowed."""
+    for k, v in PLOT_OPTION_DEFAULTS.items():
+        st.session_state[k] = v
+
+
 Y2_OPTIONS = ("none", "time", "voltage", "capacity", "current")
 
 
-def _plot_bar() -> tuple[str, str, str, str, int | None, str, bool, bool, bool, float, float, int]:
-    # Seed defaults the first time these widgets render.
-    st.session_state.setdefault("ui_preset", "V vs t")
-    st.session_state.setdefault("ui_mode", "xy")
-    st.session_state.setdefault("ui_x_axis", "time")
-    st.session_state.setdefault("ui_y_axis", "voltage")
-    st.session_state.setdefault("ui_y2_axis", "none")
-    st.session_state.setdefault("ui_color_by_status", False)
-    st.session_state.setdefault("ui_width_scale", 2.0)
+def _plot_bar() -> tuple[
+    str, str, str, str, int | None, str, bool, bool, bool, float, float, int, PlotStyle
+]:
+    # Seed defaults the first time these widgets render. PLOT_OPTION_DEFAULTS
+    # is the single source of truth, shared with the Reset button.
+    for _k, _v in PLOT_OPTION_DEFAULTS.items():
+        st.session_state.setdefault(_k, _v)
 
     # Preset segmented control — single visible row, single source of truth
     # for the named-view selection.
@@ -1090,8 +1511,11 @@ def _plot_bar() -> tuple[str, str, str, str, int | None, str, bool, bool, bool, 
             )
         )
 
-    # Customize: axes, title, manual mode override.
-    with st.expander("Customize axes & title", expanded=False):
+    # All plot options live in one expander — axes/title, figure size,
+    # styling, and manual limits — closed by default since the preset row
+    # covers the common cases.
+    with st.expander("Plot options", expanded=False):
+        st.caption("Axes & title")
         cols = st.columns([1.2, 1, 1, 1, 3])
         cols[0].selectbox(
             "Mode",
@@ -1118,7 +1542,7 @@ def _plot_bar() -> tuple[str, str, str, str, int | None, str, bool, bool, bool, 
             help="Pick 'none' for a single Y axis; pick any column to overlay it on the right.",
             on_change=_on_customize_edit,
         )
-        title = cols[4].text_input("Title (optional)", value="", key="ui_title")
+        title = cols[4].text_input("Title (optional)", key="ui_title")
         st.toggle(
             "Colour traces by cycler step (CC_Chg / CV_Chg / Rest …)",
             key="ui_color_by_status",
@@ -1130,25 +1554,91 @@ def _plot_bar() -> tuple[str, str, str, str, int | None, str, bool, bool, bool, 
             ),
         )
 
-    # Layout: figure size + line-width slider, tucked out of the way.
-    with st.expander("Plot layout", expanded=False):
+        st.divider()
+        st.caption("Layout & styling")
         lcols = st.columns(3)
         width_pct = lcols[0].slider(
             "Plot width", min_value=40, max_value=100,
-            value=st.session_state.get("ui_plot_width", 90),
             step=5, format="%d%%", key="ui_plot_width",
         )
         height_px = lcols[1].slider(
             "Plot height (px)", min_value=320, max_value=900,
-            value=st.session_state.get("ui_plot_height", 520),
             step=20, key="ui_plot_height",
         )
         width_scale = lcols[2].slider(
             "Trace width", min_value=0.5, max_value=5.0,
-            value=st.session_state.get("ui_width_scale", 2.0),
             step=0.25, key="ui_width_scale",
             help="Multiplies every line width. Useful for screenshots / projectors.",
         )
+
+        scols = st.columns(3)
+        legend_mode = scols[0].selectbox(
+            "Legend",
+            options=["below", "overlaid", "none"],
+            key="ui_legend_mode",
+            help="below = horizontal under the plot · overlaid = inset top-right · none = hidden",
+        )
+        font_size = scols[1].slider(
+            "Text size", min_value=8, max_value=28,
+            step=1, key="ui_font_size",
+        )
+        colorbar = scols[2].toggle(
+            "Cycle colorbar",
+            key="ui_colorbar",
+            help="Voltage-vs-capacity only: add a per-cell cycle-number colorbar.",
+        )
+
+        tcols = st.columns(3)
+        border = tcols[0].toggle(
+            "Outer border",
+            key="ui_border",
+            help="Box outline around the plot area.",
+        )
+        grid_x = tcols[1].toggle(
+            "Vertical gridlines",
+            key="ui_grid_x",
+        )
+        grid_y = tcols[2].toggle(
+            "Horizontal gridlines",
+            key="ui_grid_y",
+        )
+
+        # Manual axis limits — blank = auto. A limit applies only when both
+        # bounds of an axis are filled in.
+        has_y2 = st.session_state.get("ui_y2_axis", "none") != "none"
+        st.caption("Axis limits — leave blank for auto:")
+        acols = st.columns(6 if has_y2 else 4)
+        x_min = acols[0].text_input("x min", key="ui_xmin")
+        x_max = acols[1].text_input("x max", key="ui_xmax")
+        y_min = acols[2].text_input("y min", key="ui_ymin")
+        y_max = acols[3].text_input("y max", key="ui_ymax")
+        if has_y2:
+            y2_min = acols[4].text_input("y₂ min", key="ui_y2min")
+            y2_max = acols[5].text_input("y₂ max", key="ui_y2max")
+        else:
+            y2_min = y2_max = ""
+
+        st.divider()
+        st.button(
+            "Reset all options to defaults",
+            on_click=_cb_reset_options,
+            help="Restore every option above (and the preset) to its default.",
+        )
+
+    style = PlotStyle(
+        border=border,
+        grid_x=grid_x,
+        grid_y=grid_y,
+        legend_mode=legend_mode,
+        font_size=int(font_size),
+        colorbar=colorbar,
+        x_min=_parse_limit(x_min),
+        x_max=_parse_limit(x_max),
+        y_min=_parse_limit(y_min),
+        y_max=_parse_limit(y_max),
+        y2_min=_parse_limit(y2_min),
+        y2_max=_parse_limit(y2_max),
+    )
 
     # Compact action row. Columns are wide enough that the labels can't
     # collapse to per-letter wrapping on narrow windows. The `Auto` toggle
@@ -1173,7 +1663,7 @@ def _plot_bar() -> tuple[str, str, str, str, int | None, str, bool, bool, bool, 
     return (
         mode, x_axis, y_axis, y2_axis, cycle, title,
         refresh_click, live, color_by_status,
-        width_pct / 100.0, float(width_scale), height_px,
+        width_pct / 100.0, float(width_scale), height_px, style,
     )
 
 
@@ -1191,6 +1681,7 @@ def _render_plot(
     y2_axis: str = "none",
     color_by_status: bool = False,
     width_scale: float = 1.0,
+    style: PlotStyle | None = None,
     force_refresh: bool,
 ) -> None:
     if not payload:
@@ -1236,7 +1727,7 @@ def _render_plot(
         fig = _build_plotly(
             payload, raw_by_label, mode, cycle, title or None, height_px,
             x_axis=x_axis, y_axis=y_axis, y2_axis=y2_axis,
-            color_by_status=color_by_status, width_scale=width_scale,
+            color_by_status=color_by_status, width_scale=width_scale, style=style,
         )
     except Exception as exc:
         st.error(f"Plot failed: {exc}")
@@ -1283,7 +1774,17 @@ def _render_cached_figure() -> None:
         # rather than re-mount when only ancillary widgets change.
         st.plotly_chart(
             fig, use_container_width=True, key="main_plot",
-            config={"displaylogo": False},
+            config={
+                "displaylogo": False,
+                # The modebar camera button exports the live Plotly figure
+                # directly — pixel-accurate, no matplotlib re-render, no
+                # extra dependency. scale=3 gives a high-res PNG.
+                "toImageButtonOptions": {
+                    "format": "png",
+                    "filename": "datalab_plot",
+                    "scale": 3,
+                },
+            },
         )
     hits, misses = cfg.get("hits", 0), cfg.get("misses", 0)
     if hits + misses:
@@ -1293,153 +1794,85 @@ def _render_cached_figure() -> None:
         )
 
 
-def _mpl_xy_figure(
-    payload, raw, x_axis: str, y_axis: str, y2_axis: str,
-    title: str | None, color_by_status: bool = False,
-    width_scale: float = 1.0,
-):
-    """Static matplotlib fallback for the generic XY mode (PNG export).
+def _figure_to_csv(fig, style: PlotStyle | None = None) -> str:
+    """Long-format CSV of every visible line trace in the current figure.
 
-    Same composition rules as :func:`_plotly_xy`: status colouring can
-    coexist with a dual-Y secondary axis, which is always cell-coloured
-    and dashed.
+    Columns: ``trace, x, y``. Legend-only / colorbar-only placeholder
+    traces (whose x/y are a single None) are skipped.
+
+    When ``style`` carries manual axis limits, points outside the
+    visible window are dropped so the export matches what's on screen.
+    Streamlit can't read back a mouse-zoom range, so the axis-limit
+    fields are the only "visible range" the app actually knows about —
+    when they're left on auto, the full data is exported.
     """
-    import matplotlib.pyplot as plt
-    from matplotlib.lines import Line2D
+    sx_min = sx_max = sy_min = sy_max = sy2_min = sy2_max = None
+    if style is not None:
+        sx_min, sx_max = style.x_min, style.x_max
+        sy_min, sy_max = style.y_min, style.y_max
+        sy2_min, sy2_max = style.y2_min, style.y2_max
 
-    items = _normalise_items(payload)
-    colors = _assign_colors(items)
-    xlabel, ylabel = _axis_label(x_axis), _axis_label(y_axis)
-    has_y2 = y2_axis and y2_axis != "none"
-    y2label = _axis_label(y2_axis) if has_y2 else None
-    needs_gaps = (
-        _axis_resets(x_axis)
-        or _axis_resets(y_axis)
-        or (has_y2 and _axis_resets(y2_axis))
-    )
-    lw = 1.0 * width_scale
+    def _in(v, lo, hi) -> bool:
+        if v is None or lo is None or hi is None:
+            return True
+        try:
+            return lo <= float(v) <= hi
+        except (TypeError, ValueError):
+            return True
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax2 = ax.twinx() if has_y2 else None
-
-    def _xy_for(df, axis):
-        if needs_gaps:
-            tmp, x_col = _axis_col_in(df, x_axis)
-            tmp, axis_col = _axis_col_in(tmp, axis)
-            return split_half_cycles(tmp, x_col, axis_col)
-        return _axis_series(df, x_axis), _axis_series(df, axis)
-
-    # Primary Y: by status if requested, else cell-coloured.
-    status_handles: dict[str, Line2D] = {}
-    cell_handles: list[tuple[str, Line2D]] = []
-    if color_by_status:
-        for it in items:
-            label = it["label"]
-            if label not in raw:
+    rows: list[dict[str, Any]] = []
+    for tr in fig.data:
+        tx = getattr(tr, "x", None)
+        ty = getattr(tr, "y", None)
+        xs = list(tx) if tx is not None else []
+        ys = list(ty) if ty is not None else []
+        if not xs or not ys:
+            continue
+        # Skip the invisible legend / colorbar placeholder traces.
+        if all(v is None for v in xs):
+            continue
+        name = tr.name or "trace"
+        on_y2 = getattr(tr, "yaxis", None) == "y2"
+        ylo, yhi = (sy2_min, sy2_max) if on_y2 else (sy_min, sy_max)
+        for x, y in zip(xs, ys):
+            if not _in(x, sx_min, sx_max) or not _in(y, ylo, yhi):
                 continue
-            df = raw[label]
-            status_col = detect_status_column(df)
-            tmp, x_col = _axis_col_in(df, x_axis)
-            tmp, axis_col = _axis_col_in(tmp, y_axis)
-            if status_col is None:
-                ax.plot(tmp[x_col], tmp[axis_col], color="#777", lw=lw,
-                        label=f"{label} (no status)")
-                continue
-            for xs, ys, sval in split_by_status(tmp, x_col, axis_col, status_col):
-                line, = ax.plot(xs, ys, color=_status_color(sval), lw=lw)
-                if sval not in status_handles:
-                    status_handles[sval] = line
-    else:
-        for it in items:
-            label = it["label"]
-            if label not in raw:
-                continue
-            df = raw[label]
-            x, y = _xy_for(df, y_axis)
-            line, = ax.plot(x, y, color=colors[label], lw=lw, label=label)
-            cell_handles.append((label, line))
-
-    # Secondary Y: always cell-coloured + dashed.
-    if has_y2:
-        for it in items:
-            label = it["label"]
-            if label not in raw:
-                continue
-            df = raw[label]
-            x2, y2 = _xy_for(df, y2_axis)
-            ax2.plot(x2, y2, color=colors[label], lw=lw, ls="--")
-        ax2.set_ylabel(y2label)
-
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    ax.grid(alpha=0.3)
-
-    # Legend assembly — status entries on the left if colouring by status,
-    # plus per-cell entries (using a dashed-line marker) on the right when
-    # both modes are active so the user can identify which Y2 belongs to
-    # which cell.
-    legend_handles: list[Line2D] = []
-    legend_labels: list[str] = []
-    for sval, line in status_handles.items():
-        legend_handles.append(line)
-        legend_labels.append(sval)
-    for label, line in cell_handles:
-        legend_handles.append(line)
-        legend_labels.append(label)
-    if has_y2 and color_by_status:
-        # Add one dashed proxy per cell to disambiguate the right axis.
-        for it in items:
-            label = it["label"]
-            if label not in raw:
-                continue
-            legend_handles.append(
-                Line2D([0], [0], color=colors[label], lw=lw, ls="--")
-            )
-            legend_labels.append(f"{label} ({y2_axis})")
-    if legend_handles:
-        ax.legend(legend_handles, legend_labels, fontsize=8, loc="best")
-
-    if title:
-        ax.set_title(title)
-    fig.tight_layout()
-    return fig
+            rows.append({"trace": name, "x": x, "y": y})
+    return pd.DataFrame(rows, columns=["trace", "x", "y"]).to_csv(index=False)
 
 
-def _png_export_section(client: DatalabPlotClient) -> None:
-    cfg = st.session_state.get("last_plot")
-    if not cfg:
+def _png_export_section(style: PlotStyle | None = None) -> None:
+    """Export controls for the current figure.
+
+    PNG: the interactive chart's modebar camera button downloads the live
+    figure directly (pixel-accurate, high-res via the chart's scale=3
+    config). CSV: the data behind every visible trace, long-format,
+    clipped to the manual axis limits when those are set.
+    """
+    fig = st.session_state.get("last_fig")
+    if fig is None:
         return
-    with st.expander("Export static PNG"):
-        if st.button("Generate PNG", key="png_btn"):
-            try:
-                with st.spinner("Rendering PNG via matplotlib…"):
-                    if cfg["mode"] == "xy":
-                        # plot_cycles has no xy mode; build matplotlib locally
-                        # from the in-memory parsed data.
-                        raw_by_label = _raw_keyed_by_label(cfg["payload"])
-                        mpl_fig = _mpl_xy_figure(
-                            cfg["payload"], raw_by_label,
-                            cfg.get("x_axis", "time"),
-                            cfg.get("y_axis", "voltage"),
-                            cfg.get("y2_axis", "none"),
-                            cfg.get("title") or None,
-                            color_by_status=cfg.get("color_by_status", False),
-                            width_scale=cfg.get("width_scale", 1.0),
-                        )
-                    else:
-                        mpl_fig = plot_cycles(
-                            cfg["payload"], mode=cfg["mode"], cycle=cfg.get("cycle"),
-                            client=client, title=cfg.get("title") or None,
-                        )
-                st.download_button(
-                    "Download PNG",
-                    data=_fig_to_png_bytes(mpl_fig),
-                    file_name=f"datalab_plot_{cfg['mode']}.png",
-                    mime="image/png",
-                    key="png_dl",
-                )
-            except Exception as exc:
-                st.error(f"PNG export failed: {exc}")
+    cols = st.columns([3, 1])
+    cols[0].caption(
+        "📷 **PNG** — hover the plot and click the **camera** icon in its "
+        "top-right toolbar (high-res, exactly what you see). **CSV** →"
+    )
+    try:
+        csv = _figure_to_csv(fig, style)
+    except Exception:
+        csv = ""
+    cols[1].download_button(
+        "Download CSV",
+        data=csv,
+        file_name="datalab_plot.csv",
+        mime="text/csv",
+        use_container_width=True,
+        disabled=not csv,
+        help=(
+            "The data behind every line in the current plot (long format), "
+            "clipped to the manual axis limits when those are set."
+        ),
+    )
 
 
 _GLOBAL_CSS = """
@@ -1471,19 +1904,20 @@ def main() -> None:
     (
         mode, x_axis, y_axis, y2_axis, cycle, title,
         refresh_click, live, color_by_status,
-        width_frac, width_scale, height_px,
+        width_frac, width_scale, height_px, style,
     ) = _plot_bar()
 
     payload = _selected_payload(picker_df)
 
     # Detect whether the live-mode plot inputs changed since the last render —
     # if not, skip the rebuild even with Auto on. This keeps checkbox toggles
-    # snappy when only e.g. the title or width slider moves.
+    # snappy when only e.g. the title or width slider moves. `style` is a
+    # frozen dataclass, so it drops straight into the signature tuple.
     plot_signature = (
         tuple(sorted((k, v.get("item_id"), v.get("group"), v.get("color"))
                      for k, v in payload.items())),
         mode, x_axis, y_axis, y2_axis, cycle, title,
-        color_by_status, width_frac, width_scale, height_px,
+        color_by_status, width_frac, width_scale, height_px, style,
     )
     selection_changed = (
         plot_signature != st.session_state.get("last_plot_signature")
@@ -1498,7 +1932,7 @@ def main() -> None:
         _render_plot(
             client, payload, mode, cycle, title, width_frac, height_px,
             x_axis=x_axis, y_axis=y_axis, y2_axis=y2_axis,
-            color_by_status=color_by_status, width_scale=width_scale,
+            color_by_status=color_by_status, width_scale=width_scale, style=style,
             force_refresh=refresh_click,
         )
         st.session_state["last_plot_signature"] = plot_signature
@@ -1507,7 +1941,7 @@ def main() -> None:
     # so checkbox toggles when Auto-refresh is off don't blank the plot.
     if "last_fig" in st.session_state:
         _render_cached_figure()
-        _png_export_section(client)
+        _png_export_section(style)
     elif payload:
         st.caption("Tick rows and pick a plot type — the figure renders automatically.")
     else:
