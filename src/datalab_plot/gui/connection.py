@@ -238,7 +238,7 @@ def _sidebar_connection() -> DatalabPlotClient | None:
             ),
             key="ui_api_key",
         )
-        if st.sidebar.button("Connect", type="primary", use_container_width=True):
+        if st.sidebar.button("Connect", type="primary", width="stretch"):
             if not api_key:
                 st.sidebar.error("API key is required.")
             else:
@@ -260,24 +260,25 @@ def _sidebar_connection() -> DatalabPlotClient | None:
         st.caption(
             f"{len(st.session_state.get('raw_data', {}))} cell(s) parsed and in memory."
         )
-        if st.button("Forget parsed data", use_container_width=True):
+        if st.button("Forget parsed data", width="stretch"):
             st.session_state["raw_data"] = {}
             st.rerun()
         if _saved_key_for(client.client.datalab_api_url):
             if st.button(
-                "Forget saved key", use_container_width=True,
+                "Forget saved key", width="stretch",
                 help="Delete the stored API key for this URL. You'll need "
                      "to re-enter it next time.",
             ):
                 _forget_cred(client.client.datalab_api_url)
                 st.rerun()
-        if st.button("Sign out", type="secondary", use_container_width=True):
+        if st.button("Sign out", type="secondary", width="stretch"):
             try:
                 client.close()
             finally:
                 for k in list(st.session_state.keys()):
                     if str(k).startswith(f"{PICKER_KEY_BASE}_v") or k in (
-                        "client", "server_name", "results", "picker_initial",
+                        "client", "server_name", "results", "results_summary",
+                        "picker_initial",
                         "picker_version", "picker_last_edited",
                         "raw_data", "last_plot", "last_fig",
                         "last_plot_signature", "broken_items",

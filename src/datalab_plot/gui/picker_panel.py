@@ -195,7 +195,7 @@ def _picker_table() -> pd.DataFrame:
             "Couldn't load these items (auto-deselected):\n"
             + "\n".join(f"• **{iid}** — {msg}" for iid, msg in broken.items())
         )
-        if err_cols[1].button("Dismiss", use_container_width=True):
+        if err_cols[1].button("Dismiss", width="stretch"):
             st.session_state["broken_items"] = {}
             st.rerun()
 
@@ -205,19 +205,24 @@ def _picker_table() -> pd.DataFrame:
     selected_now = int(current["Select"].sum())
     total = len(initial)
 
+    # What populated the table (auto-load on connect, or a search).
+    summary = st.session_state.get("results_summary")
+    if summary:
+        st.caption(summary)
+
     head = st.columns([4, 1, 1, 1])
     head[0].markdown(f"**{selected_now}** selected of {total}")
     head[1].button(
         "All", on_click=_cb_select_all, help="Select every row",
-        use_container_width=True, disabled=total == 0,
+        width="stretch", disabled=total == 0,
     )
     head[2].button(
         "None", on_click=_cb_select_none, help="Clear selection",
-        use_container_width=True, disabled=selected_now == 0,
+        width="stretch", disabled=selected_now == 0,
     )
     head[3].button(
         "Invert", on_click=_cb_invert, help="Flip every checkbox",
-        use_container_width=True, disabled=total == 0,
+        width="stretch", disabled=total == 0,
     )
 
     with st.expander("Select a range of rows", expanded=False):
@@ -225,8 +230,8 @@ def _picker_table() -> pd.DataFrame:
         rcol = st.columns([1, 1, 1, 1])
         rcol[0].number_input("From", min_value=1, max_value=total, value=1, key="range_from")
         rcol[1].number_input("To", min_value=1, max_value=total, value=total, key="range_to")
-        rcol[2].button("Check range", on_click=_cb_check_range, use_container_width=True)
-        rcol[3].button("Uncheck range", on_click=_cb_uncheck_range, use_container_width=True)
+        rcol[2].button("Check range", on_click=_cb_check_range, width="stretch")
+        rcol[3].button("Uncheck range", on_click=_cb_uncheck_range, width="stretch")
 
     # Version-bumped-key pattern: `data=` is immutable for the lifetime of a
     # given version; bulk actions / new searches build a new initial frame
@@ -245,7 +250,7 @@ def _picker_table() -> pd.DataFrame:
     edited = st.data_editor(
         display_initial,
         hide_index=False,
-        use_container_width=True,
+        width="stretch",
         height=min(500, max(220, 38 * (total + 1))),
         column_config={
             # 50 px is the practical floor — glide-data-grid (the lib

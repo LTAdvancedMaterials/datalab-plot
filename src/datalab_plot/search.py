@@ -172,6 +172,12 @@ def find_cells(
                     if iid:
                         seen.add(iid)
                     items.append(entry)
+            # Most-recent-first, so `limit` yields the newest items. (The
+            # search path keeps the server's relevance order untouched.)
+            items.sort(
+                key=lambda it: str(it.get("last_modified") or it.get("date") or ""),
+                reverse=True,
+            )
 
         if limit:
             items = items[:limit]

@@ -152,3 +152,24 @@ def test_find_cells_with_query_uses_search():
     assert len(df) == 1
     assert df.iloc[0]["item_id"] == "CEL-9"
     assert fake.client.search_calls == [("LTO", ("samples", "cells"))]
+
+
+def test_find_cells_no_query_sorts_most_recent_first():
+    class _MultiInner:
+        def get_items(self, item_type):
+            return {
+                "samples": [
+                    {"item_id": "OLD", "type": "samples", "date": "2026-01-01"},
+                    {"item_id": "NEW", "type": "samples", "date": "2026-09-09"},
+                    {"item_id": "MID", "type": "samples", "last_modified": "2026-05-05"},
+                ]
+            }
+
+    class _C:
+        client = _MultiInner()
+
+    df = find_cells(client=_C(), item_type="samples", enrich=False)
+    assert list(df["item_id"]) == ["NEW", "MID", "OLD"]
+    # `limit` then yields the newest N.
+    df2 = find_cells(client=_C(), item_type="samples", limit=2, enrich=False)
+    assert list(df2["item_id"]) == ["NEW", "MID"]

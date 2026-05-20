@@ -87,7 +87,7 @@ def _png_export_section(style: PlotStyle | None = None) -> None:
         data=csv,
         file_name="datalab_plot.csv",
         mime="text/csv",
-        use_container_width=True,
+        width="stretch",
         disabled=not csv,
         help=(
             "The data behind every line in the current plot (long format), "

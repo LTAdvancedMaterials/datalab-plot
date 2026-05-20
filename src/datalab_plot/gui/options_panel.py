@@ -232,7 +232,7 @@ def _plot_bar() -> tuple[
     refresh_click = action[0].button(
         "Refresh",
         help="Purge local cache for selected items and re-fetch from the server.",
-        use_container_width=True,
+        width="stretch",
     )
     live = action[1].toggle(
         "Auto",
