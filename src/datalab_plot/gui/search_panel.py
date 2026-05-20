@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 
+import pandas as pd
 import streamlit as st
 
 from datalab_plot.client import DatalabPlotClient
@@ -10,6 +11,38 @@ from datalab_plot.gui.picker_panel import _build_initial_df, _current_picker_df,
 from datalab_plot.search import find_cells
 
 logger = logging.getLogger(__name__)
+
+# Number of most-recent items to pre-load into the picker on first connect.
+_AUTOPOPULATE_COUNT = 30
+
+
+def _autopopulate_recent(client: DatalabPlotClient) -> None:
+    """On first connect, pre-fill the picker with the most recent items.
+
+    Runs once per session: keyed on the absence of ``results`` in
+    session_state, which the sign-out handler clears — so reconnecting
+    re-populates. ``find_cells`` returns items most-recent-first, so the
+    ``limit`` yields the newest ones.
+    """
+    if "results" in st.session_state:
+        return
+    try:
+        with st.spinner(f"Loading {_AUTOPOPULATE_COUNT} most recent items…"):
+            df = find_cells(
+                item_type=("samples", "cells"),
+                limit=_AUTOPOPULATE_COUNT,
+                client=client,
+            )
+        st.session_state["results"] = df
+        st.session_state["results_summary"] = (
+            f"Showing the {len(df)} most recent items — search above to load others."
+        )
+        _set_initial(_build_initial_df(df, None))
+    except Exception as exc:
+        logger.warning("Auto-populate failed", exc_info=True)
+        # Mark as done (empty) so it doesn't retry on every rerun.
+        st.session_state["results"] = pd.DataFrame()
+        st.session_state["_search_error"] = str(exc)
 
 
 def _do_search() -> None:
@@ -31,6 +64,11 @@ def _do_search() -> None:
             client=client,
         )
         st.session_state["results"] = df
+        st.session_state["results_summary"] = (
+            f"{len(df)} result(s) for “{query}”"
+            if query
+            else f"Showing all {len(df)} items"
+        )
         prior = _current_picker_df()
         prior_by_id = (
             {
@@ -63,7 +101,7 @@ def _search_section(client: DatalabPlotClient) -> None:
             key="ui_query",
         )
         submitted = cols[1].form_submit_button(
-            "Search", use_container_width=True,
+            "Search", width="stretch",
         )
     if submitted:
         _do_search()

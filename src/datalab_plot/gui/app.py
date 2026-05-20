@@ -17,7 +17,10 @@ from datalab_plot.gui.export import _png_export_section  # noqa: E402
 from datalab_plot.gui.options_panel import _plot_bar  # noqa: E402
 from datalab_plot.gui.picker_panel import _picker_table, _selected_payload  # noqa: E402
 from datalab_plot.gui.plotting import _render_cached_figure, _render_plot  # noqa: E402
-from datalab_plot.gui.search_panel import _search_section  # noqa: E402
+from datalab_plot.gui.search_panel import (  # noqa: E402
+    _autopopulate_recent,
+    _search_section,
+)
 
 _GLOBAL_CSS = """
 <style>
@@ -43,6 +46,7 @@ def main() -> None:
         st.info("Connect to a datalab instance from the sidebar to begin.")
         return
 
+    _autopopulate_recent(client)
     _search_section(client)
     picker_df = _picker_table()
     (

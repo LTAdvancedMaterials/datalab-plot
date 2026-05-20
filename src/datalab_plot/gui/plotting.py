@@ -136,6 +136,9 @@ def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0,
         rows=1,
         cols=2,
         subplot_titles=("Discharge capacity", "Coulombic efficiency"),
+        # Wide gap so the right panel's "Coulombic efficiency (%)" axis title
+        # isn't crowded by the left panel.
+        horizontal_spacing=0.2,
     )
     for it in items:
         label = it["label"]
@@ -167,7 +170,16 @@ def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0,
     fig.update_xaxes(title_text="Cycle number", row=1, col=2)
     fig.update_yaxes(title_text="Discharge capacity (mAh)", row=1, col=1)
     fig.update_yaxes(title_text="Coulombic efficiency (%)", row=1, col=2, range=[90, 102])
-    return _layout(fig, height, style=style)
+    fig = _layout(fig, height, title="Cycle summary", style=style)
+    # make_subplots puts the subplot titles flush with the panel top, where
+    # they collide with the mirrored border and the overall title. Drop the
+    # panels and stack vertically: overall title (margin) · subplot titles ·
+    # panels.
+    fig.update_yaxes(domain=[0.0, 0.88])
+    for ann in fig.layout.annotations[:2]:
+        ann.update(y=0.93, yanchor="bottom")
+    fig.update_layout(margin_t=80)
+    return fig
 
 
 def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.0,
@@ -555,7 +567,8 @@ def _build_plotly(
     else:
         raise ValueError(f"Unknown mode {mode!r}")
     if title:
-        fig.update_layout(title=title)
+        # title_text (not title=) so a builder's title positioning survives.
+        fig.update_layout(title_text=title)
     return fig
 
 
@@ -724,7 +737,7 @@ def _render_cached_figure() -> None:
         # Stable key — same widget across reruns, so Streamlit/plotly diff
         # rather than re-mount when only ancillary widgets change.
         st.plotly_chart(
-            fig, use_container_width=True, key="main_plot",
+            fig, width="stretch", key="main_plot",
             config={
                 "displaylogo": False,
                 # The modebar camera button exports the live Plotly figure
