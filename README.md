@@ -1,4 +1,6 @@
-# datalab-plot
+<p align="center">
+  <img src="assets/logo-wordmark.svg" alt="datalab-plot" width="420">
+</p>
 
 Plot electrochemistry data from a [datalab](https://docs.datalab-org.io) instance
 locally — without going through the webapp. Multi-cell cycling comparisons,
