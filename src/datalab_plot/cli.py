@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import socket
 import sys
 
 import matplotlib
@@ -125,6 +126,30 @@ def _cmd_simple(plot_fn):
     return _run
 
 
+def _find_free_port(start: int, limit: int = 50) -> int:
+    """Return the first free TCP port at or after ``start``.
+
+    Passing an explicit ``server.port`` to Streamlit's bootstrap disables its
+    usual "increment to the next free port" behaviour, so an occupied port
+    would otherwise be a hard launch failure. Probe upward to restore it.
+    """
+    for port in range(start, start + limit):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            # SO_REUSEADDR matches how uvicorn/Streamlit bind: without it a
+            # port left in TIME_WAIT by a just-killed server reads as busy
+            # even though the real server could bind it fine.
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(
+        f"No free port found in {start}–{start + limit - 1}; "
+        f"pass --port with an explicit free port."
+    )
+
+
 def _cmd_gui(args: argparse.Namespace) -> int:
     try:
         from streamlit.web import bootstrap
@@ -137,8 +162,11 @@ def _cmd_gui(args: argparse.Namespace) -> int:
     from pathlib import Path
 
     script = str(Path(__file__).parent / "gui" / "app.py")
+    port = _find_free_port(args.port)
+    if port != args.port:
+        print(f"Port {args.port} is in use — starting on {port} instead.", file=sys.stderr)
     flag_options = {
-        "server.port": args.port,
+        "server.port": port,
         "server.headless": args.no_browser,
         "browser.gatherUsageStats": False,
     }
