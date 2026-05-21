@@ -1,35 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 724 200" width="724" height="200" role="img" aria-label="datalab-plot">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 781 200" width="781" height="200" role="img" aria-label="datalab-plot">
   <title>datalab-plot</title>
   <style>
-    .wm { fill: #15273b; }
-    @media (prefers-color-scheme: dark) { .wm { fill: #e9eff5; } }
+    .name { fill: #000072; }
+    @media (prefers-color-scheme: dark) { .name { fill: #E6EAEE; } }
   </style>
-
-  <!-- icon (the logo.svg tile, scaled into a 160x160 box) -->
   <g transform="translate(20 20) scale(0.625)">
-    <rect x="8" y="8" width="240" height="240" rx="54" fill="#0e1a2b"/>
-    <rect x="8.75" y="8.75" width="238.5" height="238.5" rx="53.25" fill="none" stroke="#ffffff" stroke-opacity="0.07"/>
-    <g stroke="#8ea7bf" stroke-opacity="0.13" stroke-width="2.5">
+    <rect x="8" y="8" width="240" height="240" rx="54" fill="#000072"/>
+    <rect x="8.75" y="8.75" width="238.5" height="238.5" rx="53.25" fill="none" stroke="#E6EAEE" stroke-opacity="0.12"/>
+    <g stroke="#E6EAEE" stroke-opacity="0.16" stroke-width="2.5">
       <line x1="66" y1="112" x2="206" y2="112"/>
       <line x1="66" y1="156" x2="206" y2="156"/>
     </g>
-    <g stroke="#8ea7bf" stroke-opacity="0.4" stroke-width="3.5" stroke-linecap="round">
+    <g stroke="#E6EAEE" stroke-opacity="0.5" stroke-width="3.5" stroke-linecap="round">
       <line x1="66" y1="58" x2="66" y2="198"/>
       <line x1="66" y1="198" x2="206" y2="198"/>
     </g>
-    <path d="M 78 178 C 100 172 122 156 140 154 C 166 151 184 158 200 152"
-          fill="none" stroke="#4ea8de" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M 78 168 C 100 120 122 104 140 102 C 166 99 184 92 200 82"
-          fill="none" stroke="#ff7a59" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="200" cy="82" r="10.5" fill="#0e1a2b"/>
-    <circle cx="200" cy="82" r="6" fill="#ffffff"/>
-    <circle cx="200" cy="152" r="10.5" fill="#0e1a2b"/>
-    <circle cx="200" cy="152" r="6" fill="#ffffff"/>
+    <path d="M 78 178 C 100 172 122 156 140 154 C 166 151 184 158 200 152" fill="none" stroke="#0083FF" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 78 168 C 100 120 122 104 140 102 C 166 99 184 92 200 82" fill="none" stroke="#00FFBA" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="200" cy="82" r="10.5" fill="#000072"/><circle cx="200" cy="82" r="6" fill="#FAB400"/>
+    <circle cx="200" cy="152" r="10.5" fill="#000072"/><circle cx="200" cy="152" r="6" fill="#FAB400"/>
   </g>
-
-  <!-- wordmark -->
-  <text x="212" y="130" font-size="86" font-weight="700" letter-spacing="-2"
-        font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
-    <tspan class="wm">datalab</tspan><tspan fill="#ff7a59">-plot</tspan>
-  </text>
+  <!-- wordmark — Fira Sans SemiBold, converted to outlines -->
+  <g transform="translate(212 133) scale(0.096 -0.096)"><path class="name" d="M529 741V0H404L395 65Q370 28 332.0 6.0Q294 -16 244 -16Q146 -16 94.5 59.5Q43 135 43 265Q43 347 69.5 410.5Q96 474 145.0 510.0Q194 546 260 546Q297 546 329.5 531.5Q362 517 387 492V757ZM387 154V391Q366 416 344.5 428.5Q323 441 296 441Q247 441 219.0 398.0Q191 355 191 265Q191 170 215.5 130.0Q240 90 287 90Q318 90 342.0 106.0Q366 122 387 154ZM1105 80 1075 -14Q1028 -9 998.5 8.5Q969 26 953 63Q900 -16 794 -16Q715 -16 668.5 29.5Q622 75 622 148Q622 235 685.0 281.0Q748 327 866 327H927V353Q927 402 905.0 421.0Q883 440 832 440Q776 440 692 412L660 507Q759 546 856 546Q964 546 1015.0 499.5Q1066 453 1066 361V147Q1066 116 1075.0 101.5Q1084 87 1105 80ZM927 145V246H880Q765 246 765 160Q765 125 782.5 105.5Q800 86 833 86Q893 86 927 145ZM1517 25Q1488 5 1451.5 -5.5Q1415 -16 1379 -16Q1297 -15 1255.0 31.0Q1213 77 1213 166V430H1134V530H1213V646L1355 663V530H1477L1463 430H1355V169Q1355 131 1368.0 114.0Q1381 97 1408 97Q1436 97 1468 116ZM2016 80 1986 -14Q1939 -9 1909.5 8.5Q1880 26 1864 63Q1811 -16 1705 -16Q1626 -16 1579.5 29.5Q1533 75 1533 148Q1533 235 1596.0 281.0Q1659 327 1777 327H1838V353Q1838 402 1816.0 421.0Q1794 440 1743 440Q1687 440 1603 412L1571 507Q1670 546 1767 546Q1875 546 1926.0 499.5Q1977 453 1977 361V147Q1977 116 1986.0 101.5Q1995 87 2016 80ZM1838 145V246H1791Q1676 246 1676 160Q1676 125 1693.5 105.5Q1711 86 1744 86Q1804 86 1838 145ZM2106 128V741L2248 757V132Q2248 97 2277 97Q2293 97 2305 103L2334 2Q2293 -16 2243 -16Q2178 -16 2142.0 21.5Q2106 59 2106 128ZM2843 80 2813 -14Q2766 -9 2736.5 8.5Q2707 26 2691 63Q2638 -16 2532 -16Q2453 -16 2406.5 29.5Q2360 75 2360 148Q2360 235 2423.0 281.0Q2486 327 2604 327H2665V353Q2665 402 2643.0 421.0Q2621 440 2570 440Q2514 440 2430 412L2398 507Q2497 546 2594 546Q2702 546 2753.0 499.5Q2804 453 2804 361V147Q2804 116 2813.0 101.5Q2822 87 2843 80ZM2665 145V246H2618Q2503 246 2503 160Q2503 125 2520.5 105.5Q2538 86 2571 86Q2631 86 2665 145ZM3421 265Q3421 183 3395.5 119.5Q3370 56 3322.5 20.0Q3275 -16 3211 -16Q3125 -16 3072 52L3064 0H2938V741L3080 757V473Q3105 507 3142.5 526.5Q3180 546 3222 546Q3318 546 3369.5 472.0Q3421 398 3421 265ZM3273 265Q3273 362 3248.5 401.5Q3224 441 3178 441Q3121 441 3080 373V145Q3097 118 3120.5 103.5Q3144 89 3172 89Q3219 89 3246.0 131.0Q3273 173 3273 265Z"/></g>
+  <g transform="translate(543.78 133) scale(0.096 -0.096)"><path fill="#0083FF" d="M48 369H358V257H48ZM951 266Q951 185 926.0 121.0Q901 57 853.5 20.5Q806 -16 741 -16Q658 -16 610 41V-204L468 -220V530H593L600 468Q631 507 671.0 526.5Q711 546 752 546Q854 546 902.5 472.5Q951 399 951 266ZM803 265Q803 361 779.5 401.0Q756 441 708 441Q680 441 654.5 422.5Q629 404 610 373V142Q644 90 699 90Q803 90 803 265ZM1051 128V741L1193 757V132Q1193 97 1222 97Q1238 97 1250 103L1279 2Q1238 -16 1188 -16Q1123 -16 1087.0 21.5Q1051 59 1051 128ZM1820 265Q1820 181 1789.5 117.5Q1759 54 1701.5 19.0Q1644 -16 1566 -16Q1447 -16 1379.5 58.5Q1312 133 1312 265Q1312 349 1342.5 412.5Q1373 476 1430.5 511.0Q1488 546 1567 546Q1686 546 1753.0 471.5Q1820 397 1820 265ZM1460 265Q1460 175 1486.5 132.5Q1513 90 1566 90Q1619 90 1645.5 132.5Q1672 175 1672 265Q1672 355 1646.0 397.5Q1620 440 1567 440Q1513 440 1486.5 397.5Q1460 355 1460 265ZM2237 25Q2208 5 2171.5 -5.5Q2135 -16 2099 -16Q2017 -15 1975.0 31.0Q1933 77 1933 166V430H1854V530H1933V646L2075 663V530H2197L2183 430H2075V169Q2075 131 2088.0 114.0Q2101 97 2128 97Q2156 97 2188 116Z"/></g>
 </svg>
