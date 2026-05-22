@@ -1,4 +1,9 @@
-"""Parse UV-Vis ASCII exports. Ported from pydatalab apps/uvvis/utils.py."""
+"""Parse UV-Vis ASCII exports.
+
+Ported from datalab (``pydatalab/apps/uvvis/utils.py``),
+https://github.com/datalab-org/datalab — MIT-licensed; see the NOTICE file
+at the repository root.
+"""
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,4 +1,9 @@
-"""Parse XRD patterns. Ported from pydatalab apps/xrd/utils.py."""
+"""Parse XRD patterns.
+
+Ported from datalab (``pydatalab/apps/xrd/utils.py``),
+https://github.com/datalab-org/datalab — MIT-licensed; see the NOTICE file
+at the repository root.
+"""
 from __future__ import annotations
 
 import re

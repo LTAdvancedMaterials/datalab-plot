@@ -42,6 +42,10 @@ datalab-plot = "datalab_plot.cli:main"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+# NOTICE carries the MIT notice for code ported from datalab; ship it too.
+license-files = ["LICENSE", "NOTICE"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
