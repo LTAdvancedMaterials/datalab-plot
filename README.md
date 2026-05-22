@@ -342,3 +342,8 @@ Released under the [MIT License](LICENSE) — © 2026 Lightning Tree.
 You may use, copy, modify, and distribute this software freely, provided the
 copyright notice and license text are retained. The software is provided
 "as is", without warranty of any kind.
+
+The parser modules contain code ported from
+[datalab](https://github.com/datalab-org/datalab) (© 2020-2026 Joshua Bocarsly,
+Matthew Evans & The Datalab Development Team), also under the MIT License — see
+[NOTICE](NOTICE).

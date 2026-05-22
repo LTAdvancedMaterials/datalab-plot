@@ -267,8 +267,10 @@ def compute_dqdv(
 ) -> pd.DataFrame:
     """Compute dQ/dV or dV/dQ per half cycle using navani.
 
-    Ported from
-    upstream `datalab` server (pydatalab/apps/echem/utils.py:compute_gpcl_differential).
+    Ported from datalab (``pydatalab/apps/echem/utils.py:compute_gpcl_differential``),
+    https://github.com/datalab-org/datalab — MIT-licensed; see the NOTICE file
+    at the repository root.
+
     Returns a DataFrame with columns ``capacity (mAh)`` (or ``voltage (V)`` for
     ``dV/dQ``), the conjugate column, the derivative, and ``full cycle`` /
     ``half cycle`` for each row.

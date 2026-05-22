@@ -1,4 +1,9 @@
-"""Parse 1D NMR spectra. Ported from pydatalab apps/nmr/utils.py."""
+"""Parse 1D NMR spectra.
+
+Ported from datalab (``pydatalab/apps/nmr/utils.py``),
+https://github.com/datalab-org/datalab — MIT-licensed; see the NOTICE file
+at the repository root.
+"""
 from __future__ import annotations
 
 import logging
