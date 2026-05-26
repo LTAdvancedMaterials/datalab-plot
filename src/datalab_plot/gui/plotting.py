@@ -21,6 +21,7 @@ from datalab_plot.gui.helpers import (
     _axis_label,
     _axis_resets,
     _axis_series,
+    _desaturate_css,
     _mpl_colorscale,
     _rgba_to_css,
     _status_color,
@@ -43,6 +44,47 @@ from datalab_plot.series import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Trace-style helper
+# ---------------------------------------------------------------------------
+
+def _trace_style(
+    style: PlotStyle | None,
+    color: str,
+    width: float,
+    *,
+    dash: str | None = None,
+    secondary: bool = False,
+) -> dict:
+    """Return ``mode`` + per-trace appearance kwargs honouring marker_mode.
+
+    * ``"lines"`` (default) — ``dash`` is applied if given.
+    * ``"lines+markers"`` — line + small open markers; secondary uses ``diamond``.
+    * ``"markers"`` — dots only; secondary uses ``"x"`` symbol.
+    """
+    mode = style.marker_mode if style else "lines"
+    size = style.marker_size if style else 6.0
+
+    line_cfg: dict = dict(color=color, width=width)
+    if dash:
+        line_cfg["dash"] = dash
+
+    if mode == "markers":
+        symbol = "x" if secondary else "circle"
+        return dict(
+            mode="markers",
+            marker=dict(color=color, size=size, symbol=symbol, opacity=0.8),
+        )
+    if mode == "lines+markers":
+        symbol = "diamond" if secondary else "circle"
+        return dict(
+            mode="lines+markers",
+            line=line_cfg,
+            marker=dict(color=color, size=size, symbol=symbol, opacity=0.75),
+        )
+    return dict(mode="lines", line=line_cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -146,11 +188,12 @@ def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0,
             continue
         s = summary_series(raw[label])
         color = _rgba_to_css(colors[label])
+        w = 1.6 * width_scale
         fig.add_trace(
             go.Scatter(
                 x=s.cycle, y=s.discharge_mah,
-                mode="lines", name=label,
-                line=dict(color=color, width=1.6 * width_scale),
+                **_trace_style(style, color, w),
+                name=label,
                 legendgroup=label,
                 hovertemplate="cycle %{x}<br>%{y:.1f} mAh<extra>%{fullData.name}</extra>",
             ),
@@ -159,8 +202,8 @@ def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0,
         fig.add_trace(
             go.Scatter(
                 x=s.cycle, y=s.ce_percent,
-                mode="lines", name=label,
-                line=dict(color=color, width=1.6 * width_scale),
+                **_trace_style(style, color, w),
+                name=label,
                 legendgroup=label, showlegend=False,
                 hovertemplate="cycle %{x}<br>%{y:.2f}%<extra>%{fullData.name}</extra>",
             ),
@@ -210,11 +253,12 @@ def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.
         # (one entry per cell, coloured with the colormap's mid-point) and the
         # many real per-cycle traces below share its legendgroup for toggling.
         legend_color = _rgba_to_css(cmap(0.5))
+        legend_w = 3 * width_scale
         fig.add_trace(
             go.Scatter(
-                x=[None], y=[None], mode="lines",
+                x=[None], y=[None],
+                **_trace_style(style, legend_color, legend_w),
                 name=f"{label}  ({cmap_name})",
-                line=dict(color=legend_color, width=3 * width_scale),
                 legendgroup=label, showlegend=True,
             )
         )
@@ -223,8 +267,8 @@ def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.
             color = _rgba_to_css(cmap(t.frac))
             fig.add_trace(
                 go.Scattergl(
-                    x=t.x, y=t.y, mode="lines",
-                    line=dict(color=color, width=1.0 * width_scale),
+                    x=t.x, y=t.y,
+                    **_trace_style(style, color, 1.0 * width_scale),
                     legendgroup=label, showlegend=False,
                     hovertemplate=(
                         f"<b>{label}</b> · cycle {t.cycle_id}<br>"
@@ -272,12 +316,13 @@ def _plotly_dqdv(items, raw, colors, cycle, height, width_scale: float = 1.0,
         label = it["label"]
         if label not in raw:
             continue
+        color = _rgba_to_css(colors[label])
         for t in dqdv_series(raw[label], cycle):
             fig.add_trace(
                 go.Scatter(
                     x=t.x, y=t.y,
-                    mode="lines", name=label, connectgaps=False,
-                    line=dict(color=_rgba_to_css(colors[label]), width=1.4 * width_scale),
+                    **_trace_style(style, color, 1.4 * width_scale),
+                    name=label, connectgaps=False,
                     hovertemplate="%{x:.3f} V<br>%{y:.2f} mA/V<extra>%{fullData.name}</extra>",
                 )
             )
@@ -293,12 +338,13 @@ def _plotly_voltage_time(items, raw, colors, height, width_scale: float = 1.0,
         label = it["label"]
         if label not in raw:
             continue
+        color = _rgba_to_css(colors[label])
         s = voltage_time_series(raw[label])
         fig.add_trace(
             go.Scatter(
                 x=s.x, y=s.y,
-                mode="lines", name=label,
-                line=dict(color=_rgba_to_css(colors[label]), width=1.0 * width_scale),
+                **_trace_style(style, color, 1.0 * width_scale),
+                name=label,
                 hovertemplate="%{x:.2f} h<br>%{y:.3f} V<extra>%{fullData.name}</extra>",
             )
         )
@@ -313,7 +359,10 @@ def _plotly_voltage_time(items, raw, colors, height, width_scale: float = 1.0,
 # receives the `add` callable that knows whether the figure has a secondary
 # axis, so trace placement stays in one place.
 
-def _xy_primary_status(add, items, raw, x_axis, y_axis, needs_gaps, base_w) -> None:
+def _xy_primary_status(
+    add, items, raw, x_axis, y_axis, needs_gaps, base_w,
+    style: PlotStyle | None = None,
+) -> None:
     """Primary Y traces, split into per-step segments coloured by status."""
     seen_status: set[str] = set()
     for it in items:
@@ -330,35 +379,36 @@ def _xy_primary_status(add, items, raw, x_axis, y_axis, needs_gaps, base_w) -> N
                 if needs_gaps else
                 (tmp[x_col].to_numpy(), tmp[axis_col].to_numpy())
             )
-            add(dict(
-                x=xs, y=ys, mode="lines",
-                name=f"{label} (no status)",
-                line=dict(color="#777", width=base_w),
-                connectgaps=False,
-                hovertemplate=(
+            add({
+                "x": xs, "y": ys,
+                **_trace_style(style, "#777", base_w),
+                "name": f"{label} (no status)",
+                "connectgaps": False,
+                "hovertemplate": (
                     f"<b>{label}</b><br>"
                     "%{x:.3f}<br>%{y:.3f}<extra></extra>"
                 ),
-            ), secondary=False)
+            }, secondary=False)
             continue
         for xs, ys, sval in split_by_status(tmp, x_col, axis_col, status_col):
             show = sval not in seen_status
             seen_status.add(sval)
-            add(dict(
-                x=xs, y=ys, mode="lines",
-                name=sval,
-                line=dict(color=_status_color(sval), width=base_w),
-                legendgroup=sval,
-                showlegend=show,
-                hovertemplate=(
+            add({
+                "x": xs, "y": ys,
+                **_trace_style(style, _status_color(sval), base_w),
+                "name": sval,
+                "legendgroup": sval,
+                "showlegend": show,
+                "hovertemplate": (
                     f"<b>{label}</b> · {sval}<br>"
                     "%{x:.3f}<br>%{y:.3f}<extra></extra>"
                 ),
-            ), secondary=False)
+            }, secondary=False)
 
 
 def _xy_primary_cells(
-    add, items, raw, colors, x_axis, y_axis, has_y2, needs_gaps, base_w, ylabel
+    add, items, raw, colors, x_axis, y_axis, has_y2, needs_gaps, base_w, ylabel,
+    style: PlotStyle | None = None,
 ) -> None:
     """Primary Y traces, one per cell, coloured per cell."""
     for it in items:
@@ -374,26 +424,27 @@ def _xy_primary_cells(
             xs = _axis_series(df, x_axis)
             ys = _axis_series(df, y_axis)
         cell_color = _rgba_to_css(colors[label])
-        add(dict(
-            x=xs, y=ys, mode="lines",
-            name=(f"{label} (left)" if has_y2 else label),
-            line=dict(color=cell_color, width=base_w, dash="solid"),
-            connectgaps=False,
-            legendgroup=label,
-            showlegend=True,
-            hovertemplate=(
+        add({
+            "x": xs, "y": ys,
+            **_trace_style(style, cell_color, base_w),
+            "name": (f"{label} (left)" if has_y2 else label),
+            "connectgaps": False,
+            "legendgroup": label,
+            "showlegend": True,
+            "hovertemplate": (
                 f"<b>{label}</b><br>"
                 "%{x:.3f}<br>"
                 f"%{{y:.3f}} {ylabel.split('(')[-1].rstrip(')')}"
                 "<extra></extra>"
             ),
-        ), secondary=False)
+        }, secondary=False)
 
 
 def _xy_secondary(
-    add, items, raw, colors, x_axis, y2_axis, color_by_status, needs_gaps, base_w, y2label
+    add, items, raw, colors, x_axis, y2_axis, color_by_status, needs_gaps, base_w, y2label,
+    style: PlotStyle | None = None,
 ) -> None:
-    """Secondary (right) Y traces — always cell-coloured and dashed."""
+    """Secondary (right) Y traces — cell-coloured; dashed lines or x-markers."""
     for it in items:
         label = it["label"]
         if label not in raw:
@@ -406,24 +457,24 @@ def _xy_secondary(
         else:
             xs = _axis_series(df, x_axis)
             ys = _axis_series(df, y2_axis)
-        cell_color = _rgba_to_css(colors[label])
-        add(dict(
-            x=xs, y=ys, mode="lines",
-            name=f"{label} ({y2_axis})",
-            line=dict(color=cell_color, width=base_w, dash="dash"),
-            connectgaps=False,
+        cell_color = _desaturate_css(colors[label], amount=0.5)
+        add({
+            "x": xs, "y": ys,
+            **_trace_style(style, cell_color, base_w, dash="dash", secondary=True),
+            "name": f"{label} ({y2_axis})",
+            "connectgaps": False,
             # When colouring by status, the left legend is by step name;
             # the right legend keeps per-cell entries (one per cell) so
             # users can identify which dashed line belongs to which cell.
-            legendgroup=(f"y2:{label}" if color_by_status else label),
-            showlegend=True if color_by_status else False,
-            hovertemplate=(
+            "legendgroup": (f"y2:{label}" if color_by_status else label),
+            "showlegend": True if color_by_status else False,
+            "hovertemplate": (
                 f"<b>{label}</b><br>"
                 "%{x:.3f}<br>"
                 f"%{{y:.3f}} {y2label.split('(')[-1].rstrip(')')}"
                 "<extra></extra>"
             ),
-        ), secondary=True)
+        }, secondary=True)
 
 
 def _plotly_xy(
@@ -486,17 +537,17 @@ def _plotly_xy(
 
     # --- Primary Y axis ----------------------------------------------------
     if color_by_status:
-        _xy_primary_status(_add, items, raw, x_axis, y_axis, needs_gaps, base_w)
+        _xy_primary_status(_add, items, raw, x_axis, y_axis, needs_gaps, base_w, style)
     else:
         _xy_primary_cells(
-            _add, items, raw, colors, x_axis, y_axis, has_y2, needs_gaps, base_w, ylabel
+            _add, items, raw, colors, x_axis, y_axis, has_y2, needs_gaps, base_w, ylabel, style
         )
 
     # --- Secondary Y axis (always cell-coloured, dashed) ------------------
     if has_y2:
         _xy_secondary(
             _add, items, raw, colors, x_axis, y2_axis,
-            color_by_status, needs_gaps, base_w, y2label,
+            color_by_status, needs_gaps, base_w, y2label, style,
         )
 
     # --- Axis labels + title ----------------------------------------------

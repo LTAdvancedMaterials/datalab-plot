@@ -15,6 +15,12 @@ from datalab_plot.gui.constants import (
 )
 from datalab_plot.gui.helpers import _parse_limit
 
+_MARKER_MODE_MAP: dict[str, str] = {
+    "Lines": "lines",
+    "Lines + points": "lines+markers",
+    "Points only": "markers",
+}
+
 
 def _apply_preset(preset: str) -> None:
     mode, x, y, y2 = PRESET_MAP[preset]
@@ -47,7 +53,7 @@ def _cb_reset_options() -> None:
         st.session_state[k] = v
 
 
-def _style_controls() -> tuple[int, int, float, str, int, bool, bool, bool, bool]:
+def _style_controls() -> tuple[int, int, float, str, int, bool, bool, bool, bool, str, int]:
     """Render the Layout & styling rows. Returns
     ``(width_pct, height_px, width_scale, legend_mode, font_size, colorbar,
     border, grid_x, grid_y)``."""
@@ -93,9 +99,24 @@ def _style_controls() -> tuple[int, int, float, str, int, bool, bool, bool, bool
     )
     grid_x = tcols[1].toggle("Vertical gridlines", key="ui_grid_x")
     grid_y = tcols[2].toggle("Horizontal gridlines", key="ui_grid_y")
+
+    mcols = st.columns([2, 1])
+    marker_mode_label = mcols[0].selectbox(
+        "Trace style",
+        options=list(_MARKER_MODE_MAP.keys()),
+        key="ui_marker_mode",
+        on_change=_on_customize_edit,
+    )
+    marker_size = mcols[1].slider(
+        "Marker size",
+        min_value=2, max_value=16, step=1,
+        key="ui_marker_size",
+        disabled=(marker_mode_label == "Lines"),
+        on_change=_on_customize_edit,
+    )
     return (
         width_pct, height_px, width_scale, legend_mode, font_size,
-        colorbar, border, grid_x, grid_y,
+        colorbar, border, grid_x, grid_y, marker_mode_label, int(marker_size),
     )
 
 
@@ -195,7 +216,7 @@ def _plot_bar() -> tuple[
 
         (
             width_pct, height_px, width_scale, legend_mode, font_size,
-            colorbar, border, grid_x, grid_y,
+            colorbar, border, grid_x, grid_y, marker_mode_label, marker_size,
         ) = _style_controls()
 
         # Manual axis limits — blank = auto. A limit applies only when both
@@ -217,6 +238,8 @@ def _plot_bar() -> tuple[
         legend_mode=legend_mode,
         font_size=int(font_size),
         colorbar=colorbar,
+        marker_mode=_MARKER_MODE_MAP[marker_mode_label],
+        marker_size=float(marker_size),
         x_min=_parse_limit(x_min),
         x_max=_parse_limit(x_max),
         y_min=_parse_limit(y_min),

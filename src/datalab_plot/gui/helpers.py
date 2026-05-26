@@ -18,6 +18,22 @@ def _rgba_to_css(c: Any) -> str:
     return f"rgba({int(r * 255)}, {int(g * 255)}, {int(b * 255)}, {a:.3f})"
 
 
+def _desaturate_css(c: Any, amount: float = 0.5) -> str:
+    """Desaturate colour ``c`` by ``amount`` (0 = unchanged, 1 = greyscale) and
+    return a CSS rgba string. Mixes each channel toward the luminance-weighted
+    grey so hue is preserved while chroma drops — useful for secondary-axis
+    traces that should read as supporting data without losing their cell colour.
+    """
+    from matplotlib.colors import to_rgba
+
+    r, g, b, a = to_rgba(c)
+    grey = 0.299 * r + 0.587 * g + 0.114 * b
+    r2 = r + (grey - r) * amount
+    g2 = g + (grey - g) * amount
+    b2 = b + (grey - b) * amount
+    return f"rgba({int(r2 * 255)}, {int(g2 * 255)}, {int(b2 * 255)}, {a:.3f})"
+
+
 def _status_color(status: str) -> str:
     """Stable colour for a status string. Known ones get a hand-picked hue;
     unknowns fall through to tab20 via a hash so they stay distinguishable."""

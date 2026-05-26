@@ -119,6 +119,8 @@ PLOT_OPTION_DEFAULTS: dict[str, object] = {
     "ui_border": True,
     "ui_grid_x": True,
     "ui_grid_y": True,
+    "ui_marker_mode": "Lines",
+    "ui_marker_size": 6,
     "ui_xmin": "", "ui_xmax": "", "ui_ymin": "", "ui_ymax": "",
     "ui_y2min": "", "ui_y2max": "",
 }
@@ -141,6 +143,8 @@ class PlotStyle:
     legend_mode: str = "below"     # "below" | "overlaid" | "none"
     font_size: int = 13
     colorbar: bool = False         # V-vs-Q: per-cell cycle-number colorbar
+    marker_mode: str = "lines"     # "lines" | "lines+markers" | "markers"
+    marker_size: float = 6.0       # dot diameter in px (ignored when marker_mode="lines")
     x_min: float | None = None
     x_max: float | None = None
     y_min: float | None = None
