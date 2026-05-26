@@ -52,6 +52,14 @@ Streamlit app), `picker.py` (ipywidgets selector for Jupyter).
 - GUI state lives in `st.session_state`. **Never rename a session-state key
   string** without auditing every use — the picker's version-key trick and
   auto-connect logic depend on exact key names.
+- **Plot zoom resets on every styling change.** This is a Streamlit limitation,
+  not a bug in our code. `st.plotly_chart` keys its frontend figure state on
+  an element ID hashed from the full figure JSON, so any spec change
+  (marker mode, font size, gridlines, etc.) remounts the React component and
+  Plotly drops its UI state. Setting `layout.uirevision` doesn't help — the
+  remount happens before `Plotly.react()` is ever called. Workaround is "style
+  first, zoom last." Do not spend time on this without bypassing
+  `st.plotly_chart` entirely (custom HTML component).
 - Tests use **synthetic in-memory data only** (see `tests/conftest.py`). Do not
   commit real company data files.
 
