@@ -13,6 +13,10 @@ single-cell deep dives, NMR / XRD / UV-Vis. Three user surfaces:
 - **CLI** — `datalab-plot list / cycle / cell / nmr / xrd / uvvis` for one-shot
   PNG exports.
 
+<p align="center">
+  <img src="screenshot.png" alt="datalab-plot Streamlit web UI" width="900">
+</p>
+
 ## Quickstart
 
 Three commands from a cold machine to the web UI. Works on macOS, Linux,
