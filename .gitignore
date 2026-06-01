@@ -22,6 +22,7 @@ cache/
 files/
 *.png
 !docs/**/*.png
+!screenshot.png
 
 # Notebook artefacts
 .ipynb_checkpoints/
