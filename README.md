@@ -45,6 +45,16 @@ Restart your terminal so `uv` is on `PATH`. Already have `uv`? Skip ahead.
 From any directory you want the project's environment to live in (e.g.
 your home dir). The two commands below are identical on all OSes:
 
+> If your shell prompt shows `(base)` or another conda environment name,
+> run `conda deactivate` first. An active conda env with a non-3.12
+> Python can shadow `uv`'s own interpreter and cause the next two
+> commands to fail with confusing import / version errors.
+>
+> Also, the second command fetches from a `git+https://...` URL so it needs
+> `git` on PATH. Run `git --version` first; if it errors, install Git from
+> [git-scm.com](https://git-scm.com/downloads) (Windows users most often
+> need this).
+
 ```bash
 uv venv --python 3.12
 uv pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
@@ -283,6 +293,48 @@ you're in a different directory than the one you installed into. Either
 re-run from the install directory with `uv run datalab-plot ...`, or
 activate the venv (`source .venv/bin/activate` /
 `.venv\Scripts\Activate.ps1`) and try again.
+
+</details>
+
+<details>
+<summary><code>SSL: CERTIFICATE_VERIFY_FAILED</code> or fetch timeouts on a corporate / institutional network</summary>
+
+Your network probably routes HTTPS through a proxy or MITM filter (common
+in pharma, biotech, and university VPNs). Two env vars cover the common
+cases — set them before retrying the `uv pip install` line:
+
+```bash
+# macOS / Linux:
+export HTTPS_PROXY=http://proxy.your-org.example:8080
+export SSL_CERT_FILE=/path/to/corporate-ca.pem   # ask IT for the .pem path
+```
+
+```powershell
+# Windows PowerShell:
+$env:HTTPS_PROXY = "http://proxy.your-org.example:8080"
+$env:SSL_CERT_FILE = "C:\path\to\corporate-ca.pem"
+```
+
+</details>
+
+<details>
+<summary><code>uv: command not found</code> after the install script (even after restarting the terminal)</summary>
+
+The Astral installer puts `uv` under `~/.local/bin` (macOS / Linux) or
+`%USERPROFILE%\.local\bin` (Windows). If your shell isn't picking that up:
+
+```bash
+# macOS / Linux (zsh — add to ~/.zshrc; bash — ~/.bashrc):
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+```
+
+```powershell
+# Windows PowerShell (one-off check):
+& "$env:USERPROFILE\.local\bin\uv.exe" --version
+```
+
+If the Windows one-off works, add `%USERPROFILE%\.local\bin` to your user
+PATH via *System Properties → Environment Variables*.
 
 </details>
 
