@@ -22,6 +22,28 @@ from datalab_plot.gui.search_panel import (  # noqa: E402
     _search_section,
 )
 
+# Favicon — a small-size-optimised variant of the brand logo (assets/logo.svg).
+# Streamlit's set_page_config(page_icon=...) detects raw SVG strings via a
+# regex on `<svg `. We inline it so the icon ships with the package and loads
+# regardless of install path.
+#
+# Differences from the full brand mark: no gridlines, no axes, thicker traces
+# (22 vs 9 in a 256-px viewBox → ~1.4 px stroke at 16x16, vs ~0.6 px before),
+# larger endpoint dots with a dark-blue contrast ring, chart fills more of the
+# tile. The full detail-rich logo still lives at assets/logo.svg for README /
+# brand use at larger sizes.
+_FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="#000072"/>
+  <path d="M 48 184 C 92 178 142 168 188 168"
+    fill="none" stroke="#0083FF" stroke-width="22" stroke-linecap="round"/>
+  <path d="M 48 180 C 92 112 142 78 188 72"
+    fill="none" stroke="#00FFBA" stroke-width="22" stroke-linecap="round"/>
+  <circle cx="188" cy="72" r="28" fill="#000072"/>
+  <circle cx="188" cy="72" r="18" fill="#FAB400"/>
+  <circle cx="188" cy="168" r="28" fill="#000072"/>
+  <circle cx="188" cy="168" r="18" fill="#FAB400"/>
+</svg>"""
+
 _GLOBAL_CSS = """
 <style>
 /* Prevent button labels and widget labels (incl. st.toggle) from wrapping
@@ -37,7 +59,7 @@ _GLOBAL_CSS = """
 
 
 def main() -> None:
-    st.set_page_config(page_title="datalab-plot", layout="wide")
+    st.set_page_config(page_title="datalab-plot", page_icon=_FAVICON_SVG, layout="wide")
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
     st.title("datalab-plot")
 
