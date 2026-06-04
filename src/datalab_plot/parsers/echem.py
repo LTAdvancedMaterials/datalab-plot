@@ -77,10 +77,10 @@ def load_echem(paths: Path | list[Path]) -> pd.DataFrame:
     together with cycle-index offsets.
     """
     if isinstance(paths, (str, Path)):
-        return ec.echem_file_loader(str(paths))
+        return _normalise_neware_state(ec.echem_file_loader(str(paths)))
     paths = list(paths)
     if len(paths) == 1:
-        return ec.echem_file_loader(str(paths[0]))
+        return _normalise_neware_state(ec.echem_file_loader(str(paths[0])))
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",
@@ -89,7 +89,105 @@ def load_echem(paths: Path | list[Path]) -> pd.DataFrame:
             ),
             category=UserWarning,
         )
-        return ec.multi_echem_file_loader([str(p) for p in paths])
+        return _normalise_neware_state(
+            ec.multi_echem_file_loader([str(p) for p in paths])
+        )
+
+
+# The full set of strings ``NewareNDA`` writes into the ``Status`` column
+# (NewareNDA/dicts.py:state_dict). ``navani.neware.neware_reader_nda`` only
+# handles ``Rest``, ``CC_Chg`` and ``CC_DChg``; every other status (notably
+# the CV phase that follows every CC charge in a CCCV protocol) is left as
+# the categorical literal ``"unknown"``, which then compares as a distinct
+# state in navani's half-cycle diff and produces a spurious half cycle at
+# every CC↔CV step boundary.
+_NEWARE_STATUSES = frozenset({
+    "Rest", "Pause", "OCV",
+    "CC_Chg", "CV_Chg", "CCCV_Chg", "CP_Chg", "CPCV_Chg",
+    "CC_DChg", "CV_DChg", "CCCV_DChg", "CP_DChg", "CR_DChg", "CPCV_DChg",
+    "Cycle", "Pulse", "SIM", "Control",
+})
+
+
+def _classify_neware_status(status: object) -> object:
+    """Map a Neware ``Status`` string to navani's ``state`` convention.
+
+    Charge variants (``CC_Chg``, ``CV_Chg``, ``CCCV_Chg``, …) collapse to
+    ``0``; discharge variants (``CC_DChg``, ``CV_DChg``, …) to ``1``;
+    everything else — including unmodelled protocol markers like ``Cycle``,
+    ``Pulse``, ``SIM`` and ``Control`` — is treated as a rest. Matching
+    ``_DChg`` before ``_Chg`` is load-bearing: ``CC_DChg`` ends with both
+    suffixes and must route to discharge.
+    """
+    if not isinstance(status, str):
+        return "R"
+    if status.endswith("_DChg"):
+        return 1
+    if status.endswith("_Chg"):
+        return 0
+    return "R"
+
+
+def _normalise_neware_state(df: pd.DataFrame) -> pd.DataFrame:
+    """Re-derive ``state`` / ``half cycle`` / ``full cycle`` / ``Capacity``
+    for Neware data so CV phases stay inside their parent half-cycle.
+
+    No-op unless ``df`` carries a Neware-shaped ``Status`` column. When it
+    does, every row's ``state`` is reclassified from ``Status`` (so CV and
+    other unmodelled steps stop reading as ``"unknown"``), then
+    ``half cycle`` and ``full cycle`` are rebuilt using the same cumulative-
+    diff algorithm navani uses. ``Capacity`` is re-integrated from
+    ``|Current| · dt`` within each corrected half cycle, because Neware's
+    raw ``Charge_Capacity`` / ``Discharge_Capacity`` columns reset at each
+    *step* — so without this the V-Q line jumps back to ``Q = 0`` at every
+    CC→CV step boundary inside one charge half.
+    """
+    if "Status" not in df.columns:
+        return df
+    statuses = df["Status"].astype(str)
+    if not statuses.isin(_NEWARE_STATUSES).any():
+        return df
+
+    df = df.copy()
+    df["state"] = statuses.map(_classify_neware_status)
+
+    # navani's exact cycle-change → half-cycle algorithm, applied to the
+    # corrected state column. Rest rows don't carry a cycle change, so the
+    # diff only fires across true CC↔DCh transitions.
+    df["cycle change"] = False
+    not_rest = df.index[df["state"] != "R"]
+    df.loc[not_rest, "cycle change"] = (
+        df.loc[not_rest, "state"].ne(df.loc[not_rest, "state"].shift())
+    )
+    df["half cycle"] = df["cycle change"].astype(bool).cumsum().astype(int)
+    df["full cycle"] = np.ceil(df["half cycle"].to_numpy() / 2).astype(int)
+
+    # Rebuild Capacity by integrating |Current|·dt per corrected half cycle.
+    # During rest Current ≈ 0 so the curve stays flat; during CV Current is
+    # tapering but non-zero so the curve continues smoothly from where the CC
+    # phase left off. Pre-first-active rest rows in a half cycle are pinned
+    # to Q = 0 so the trace starts cleanly at the first real charge/discharge
+    # point.
+    if {"Current", "Time"}.issubset(df.columns):
+        dt = df["Time"].diff().fillna(0.0).clip(lower=0.0)
+        dq = (df["Current"].abs() * dt) / 3600.0  # mA · s → mAh
+        capacity = np.zeros(len(df), dtype=float)
+        for hc, idx in df.groupby("half cycle").groups.items():
+            if hc == 0:
+                continue
+            seg_states = df.loc[idx, "state"]
+            active = idx[seg_states.to_numpy() != "R"]
+            if len(active) == 0:
+                continue
+            first_active = active[0]
+            seg_dq = dq.loc[idx].copy()
+            # Pin the first active sample to Q = 0 (and any pre-active rests
+            # along with it). Matches navani's _reset_capacity_per_half_cycle.
+            seg_dq.loc[idx[idx <= first_active]] = 0.0
+            capacity[df.index.get_indexer(idx)] = seg_dq.cumsum().to_numpy()
+        df["Capacity"] = capacity
+
+    return df
 
 
 def cycle_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
