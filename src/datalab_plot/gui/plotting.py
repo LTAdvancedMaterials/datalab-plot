@@ -36,7 +36,7 @@ from datalab_plot.parsers.echem import (
 )
 from datalab_plot.plots.echem import _assign_colors, _normalise_items
 from datalab_plot.series import (
-    PER_CELL_CMAPS,
+    cycle_cmap,
     dqdv_series,
     summary_series,
     voltage_capacity_series,
@@ -227,15 +227,13 @@ def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0,
 
 def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.0,
                              style: PlotStyle | None = None) -> go.Figure:
-    """V-Q for every cycle of every cell. Each cell gets its own perceptually
-    uniform colormap; cycles are coloured along that gradient (early = light,
-    late = dark for viridis-family). The `colors` param is unused here.
+    """V-Q for every cycle of every cell. Each cell gets a distinct
+    single-hue colour-to-dark gradient (orange first by default). Late
+    cycle = dark / saturated end. The ``colors`` param is unused here.
 
     When ``style.colorbar`` is set, a per-cell cycle-number colorbar is added
     on the right.
     """
-    import matplotlib.pyplot as _plt  # local import to keep cold-start light
-
     show_cbar = bool(style and style.colorbar)
     fig = go.Figure()
     n_colorbars = 0
@@ -246,8 +244,7 @@ def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.
         traces = voltage_capacity_series(raw[label])
         if not traces:
             continue
-        cmap_name = PER_CELL_CMAPS[cell_idx % len(PER_CELL_CMAPS)]
-        cmap = _plt.colormaps[cmap_name]
+        cmap, cmap_name = cycle_cmap(cell_idx)
 
         # One invisible legend-only trace per cell so the legend stays compact
         # (one entry per cell, coloured with the colormap's mid-point) and the
