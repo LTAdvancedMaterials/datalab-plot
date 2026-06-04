@@ -11,7 +11,7 @@ from matplotlib.figure import Figure
 from ..client import DatalabPlotClient, _resolve_client
 from ..parsers.echem import is_cycling_file, load_echem
 from ..series import (
-    PER_CELL_CMAPS,
+    cycle_cmap,
     dqdv_series,
     summary_series,
     voltage_capacity_series,
@@ -215,10 +215,10 @@ def _plot_voltage_capacity(
 ) -> Figure:
     """Plot V vs Q for every cycle of every cell.
 
-    Each cell gets its own perceptually uniform colormap; within each cell,
-    cycles are coloured from the colormap with early cycles light and late
-    cycles dark. The legend has one entry per cell using the colormap's
-    mid-point colour as a representative swatch.
+    Each cell gets a distinct single-hue colour-to-dark gradient (orange
+    first by default). Late cycle = dark / saturated end. The legend has
+    one entry per cell using the colormap's mid-point colour as a
+    representative swatch.
     """
     from matplotlib.lines import Line2D
 
@@ -235,8 +235,7 @@ def _plot_voltage_capacity(
         traces = voltage_capacity_series(raw[label])
         if not traces:
             continue
-        cmap_name = PER_CELL_CMAPS[cell_idx % len(PER_CELL_CMAPS)]
-        cmap = plt.colormaps[cmap_name]
+        cmap, cmap_name = cycle_cmap(cell_idx)
         for t in traces:
             ax.plot(t.x, t.y, color=cmap(t.frac), lw=0.9)
         legend_handles.append(Line2D([0], [0], color=cmap(0.5), lw=3))

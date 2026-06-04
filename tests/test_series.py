@@ -8,6 +8,7 @@ from datalab_plot.series import (
     SummarySeries,
     XYSeries,
     cumulative_time_hours,
+    cycle_cmap,
     cycle_ids,
     dqdv_series,
     summary_series,
@@ -75,3 +76,26 @@ def test_cumulative_time_hours_uses_monotonic_column(echem_df):
     hours = cumulative_time_hours(echem_df)
     assert hours.iloc[0] == 0.0
     assert hours.is_monotonic_increasing
+
+
+def test_cycle_cmap_first_is_orange():
+    _, name = cycle_cmap(0)
+    assert name == "oranges"
+
+
+def test_cycle_cmap_picks_distinct_gradients():
+    a, name_a = cycle_cmap(0)
+    b, name_b = cycle_cmap(1)
+    c, name_c = cycle_cmap(2)
+    assert len({name_a, name_b, name_c}) == 3
+    # Each gradient runs from a saturated start to a dark end (late = dark).
+    for cmap in (a, b, c):
+        start_lum = sum(cmap(0.0)[:3])
+        end_lum = sum(cmap(1.0)[:3])
+        assert end_lum < start_lum
+
+
+def test_cycle_cmap_indices_wrap():
+    _, name_a = cycle_cmap(0)
+    _, name_b = cycle_cmap(6)  # 6 % 6 == 0, same family as cell 0
+    assert name_a == name_b

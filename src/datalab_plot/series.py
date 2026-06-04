@@ -11,14 +11,54 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
+import matplotlib.pyplot as _plt
 import numpy as np
 import pandas as pd
+from matplotlib.colors import Colormap, LinearSegmentedColormap
 
 from .parsers.echem import compute_dqdv, cycle_summary, filter_by_cycle, split_half_cycles
 
-# Perceptually uniform sequential colormaps; one per cell in V-Q plots,
-# cycled if more cells than colormaps are selected. Used by both backends.
-PER_CELL_CMAPS = ("viridis", "plasma", "inferno", "magma", "cividis")
+# V-Q cycle colouring is driven through `cycle_cmap` so both backends use the
+# same gradients. Each cell gets a distinct colour-to-dark gradient drawn
+# from matplotlib's single-hue sequential colormaps, clamped to [0.4, 1.0]
+# so cycles start saturated rather than near-white. Late cycle = dark end.
+# Orange is first because it's the most legible default on a white
+# background and is visually distinct from the GUI's chrome.
+
+
+def _clamped(base: str, lo: float = 0.4, hi: float = 1.0, n: int = 256) -> Colormap:
+    """Return a 256-stop ``LinearSegmentedColormap`` of ``base`` over ``[lo, hi]``.
+
+    Matches the ``0.4 + 0.55·…`` clamping pattern used for cell-grouping
+    colours in ``plots/echem.py`` (``_assign_colors``), so V-Q per-cell
+    gradients stay visually consistent with the rest of the GUI.
+    """
+    src = _plt.colormaps[base]
+    return LinearSegmentedColormap.from_list(
+        base.lower(), [src(lo + (hi - lo) * i / (n - 1)) for i in range(n)]
+    )
+
+
+_PER_CELL_CMAPS = (
+    _clamped("Oranges"),
+    _clamped("Blues"),
+    _clamped("Greens"),
+    _clamped("Purples"),
+    _clamped("Reds"),
+    _clamped("Greys"),
+)
+
+
+def cycle_cmap(cell_idx: int) -> tuple[Colormap, str]:
+    """Pick the per-cell cmap for a V-Q trace.
+
+    Each cell gets a distinct colour-to-dark gradient indexed by
+    ``cell_idx`` (cycled with ``%`` if there are more cells than
+    gradients). Returns ``(cmap, short display name)`` so callers can
+    label the legend.
+    """
+    cmap = _PER_CELL_CMAPS[cell_idx % len(_PER_CELL_CMAPS)]
+    return cmap, cmap.name
 
 
 class SummarySeries(NamedTuple):
