@@ -62,6 +62,24 @@ Streamlit app), `picker.py` (ipywidgets selector for Jupyter).
   `st.plotly_chart` entirely (custom HTML component).
 - Tests use **synthetic in-memory data only** (see `tests/conftest.py`). Do not
   commit real company data files.
+- **Neware `.nda` / `.ndax` data is post-processed.** `navani.neware.
+  neware_reader_nda` only classifies three of the 19 Neware `Status` values
+  (`Rest`, `CC_Chg`, `CC_DChg`); everything else (`CV_Chg`, `CCCV_Chg`,
+  `CP_Chg`, `CV_DChg`, `Pause`, `OCV`, …) becomes the categorical literal
+  `"unknown"`, which then reads as a distinct state in navani's half-cycle
+  diff and inflates the cycle count (each CC↔CV transition becomes a
+  spurious half cycle, shifting discharge halves onto the next cycle's
+  trace). `parsers.echem._normalise_neware_state` runs after every
+  `load_echem` call and re-derives `state` / `cycle change` / `half cycle`
+  / `full cycle` / `Capacity` from `Status`. No-op for non-Neware data. If
+  you ever rip out the post-processor, V-Q on Neware files will fragment
+  again.
+- **V-Q plots drop rest rows.** `series.voltage_capacity_series` filters
+  `state == 'R'` before splitting half-cycles. Rest periods sit at constant
+  Q while V relaxes, so plotting them draws vertical "OCV recovery" lines
+  that aren't part of the cycling characteristic. Time-domain plots
+  (`voltage_time_series`) and cycle-summary plots keep rests; capacity-
+  domain plots don't.
 
 ## Working in this repo
 

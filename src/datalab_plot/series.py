@@ -71,11 +71,18 @@ def voltage_capacity_series(
 ) -> list[CycleTrace]:
     """V-Q line data, one :class:`CycleTrace` per full cycle.
 
+    Rest rows (``state == 'R'``) are dropped: V-Q is a charge-transfer
+    characteristic, and rest periods sit at constant Q while V relaxes —
+    drawing them produces vertical "OCV recovery" lines that aren't part of
+    the cycling curve. Mid-cycle pauses are dropped for the same reason.
+
     Each trace already carries NaN separators between half-cycles (via
     :func:`split_half_cycles`). Pass ``cycles`` to restrict; default is every
     cycle in ``df``.
     """
     filt = filter_by_cycle(df, cycles) if cycles is not None else df
+    if "state" in filt.columns:
+        filt = filt[filt["state"] != "R"]
     ids = cycle_ids(filt)
     n = len(ids)
     traces: list[CycleTrace] = []
