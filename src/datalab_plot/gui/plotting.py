@@ -35,6 +35,7 @@ from datalab_plot.parsers.echem import (
     split_half_cycles,
 )
 from datalab_plot.plots.echem import _assign_colors, _normalise_items
+from datalab_plot.search import extract_cathode_mass_mg
 from datalab_plot.series import (
     cycle_cmap,
     dqdv_series,
@@ -636,27 +637,6 @@ def _build_plotly(
 # Data acquisition (cached per item_id across reruns)
 # ---------------------------------------------------------------------------
 
-def _extract_cathode_mass_mg(item_dict: dict) -> float | None:
-    """Sum all ``quantity`` values on positive-electrode constituents (units: mg)."""
-    pos = item_dict.get("positive_electrode") or []
-    if not isinstance(pos, list):
-        return None
-    total = 0.0
-    found = False
-    for cons in pos:
-        if not isinstance(cons, dict):
-            continue
-        qty = cons.get("quantity")
-        if qty is None:
-            continue
-        try:
-            total += float(qty)
-            found = True
-        except (TypeError, ValueError):
-            continue
-    return total if found else None
-
-
 def _masses_keyed_by_label(payload: dict[str, dict[str, Any]]) -> dict[str, float]:
     """Return cathode masses (g) keyed by plot label for items that have one."""
     masses_by_id: dict[str, float | None] = st.session_state.get("cathode_masses", {})
@@ -692,7 +672,7 @@ def _ensure_data_for(
             client.purge(iid)
         try:
             item_dict = client.client.get_item(item_id=iid)
-            mass_mg = _extract_cathode_mass_mg(item_dict)
+            mass_mg = extract_cathode_mass_mg(item_dict)
             cathode_masses[iid] = mass_mg / 1000.0 if mass_mg is not None else None
             results = client.fetch_files_verbose(
                 iid, predicate=is_cycling_file, item=item_dict

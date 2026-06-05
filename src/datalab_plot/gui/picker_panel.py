@@ -47,6 +47,7 @@ def _build_initial_df(
             continue
         seen_in_results.add(iid)
         prev = prior_selected.get(iid, {})
+        mass = r.get("cathode_mass_mg")
         rows.append(
             {
                 "Select": bool(prev.get("Select", False)),
@@ -55,6 +56,7 @@ def _build_initial_df(
                 "positive_electrode": r.get("positive_electrode", "") or "",
                 "negative_electrode": r.get("negative_electrode", "") or "",
                 "electrolyte": r.get("electrolyte", "") or "",
+                "cathode_mass_mg": float(mass) if mass is not None else None,
                 "label": prev.get("label") or (r.get("name") or iid),
                 "group": prev.get("group", "") or "",
                 "color": prev.get("color", "") or "",
@@ -71,6 +73,7 @@ def _build_initial_df(
                 "positive_electrode": prev.get("positive_electrode", "") or "",
                 "negative_electrode": prev.get("negative_electrode", "") or "",
                 "electrolyte": prev.get("electrolyte", "") or "",
+                "cathode_mass_mg": prev.get("cathode_mass_mg"),
                 "label": prev.get("label") or iid,
                 "group": prev.get("group", "") or "",
                 "color": prev.get("color", "") or "",
@@ -268,6 +271,12 @@ def _picker_table() -> pd.DataFrame:
             ),
             "electrolyte": st.column_config.TextColumn(
                 "electrolyte", disabled=True, help="Electrolyte constituents"
+            ),
+            "cathode_mass_mg": st.column_config.NumberColumn(
+                "mass (mg)",
+                disabled=True,
+                help="Cathode mass (sum of positive-electrode constituent quantities, mg)",
+                format="%.2f",
             ),
             "label": st.column_config.TextColumn("label", help="Used in the plot legend"),
             "group": st.column_config.TextColumn(

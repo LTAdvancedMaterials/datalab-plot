@@ -41,6 +41,31 @@ def _format_constituents(value: object) -> str:
     return " + ".join(names)
 
 
+def extract_cathode_mass_mg(item_dict: dict) -> float | None:
+    """Sum all ``quantity`` values on positive-electrode constituents (units: mg).
+
+    Returns ``None`` when no positive-electrode constituents carry a numeric
+    quantity (i.e. the cell record has no mass data).
+    """
+    pos = item_dict.get("positive_electrode") or []
+    if not isinstance(pos, list):
+        return None
+    total = 0.0
+    found = False
+    for cons in pos:
+        if not isinstance(cons, dict):
+            continue
+        qty = cons.get("quantity")
+        if qty is None:
+            continue
+        try:
+            total += float(qty)
+            found = True
+        except (TypeError, ValueError):
+            continue
+    return total if found else None
+
+
 def _row_from_item(it: dict) -> dict:
     collections = it.get("collections") or []
     coll_names = ", ".join(
@@ -62,6 +87,7 @@ def _row_from_item(it: dict) -> dict:
         # The list endpoint carries `date`; the full item carries `last_modified`.
         "last_modified": it.get("last_modified") or it.get("date") or "",
         "collections": coll_names,
+        "cathode_mass_mg": extract_cathode_mass_mg(it),
     }
 
 
@@ -193,6 +219,6 @@ def find_cells(
         columns=[
             "item_id", "name", "refcode", "type", "chemform",
             "positive_electrode", "negative_electrode", "electrolyte",
-            "last_modified", "collections",
+            "last_modified", "collections", "cathode_mass_mg",
         ],
     )

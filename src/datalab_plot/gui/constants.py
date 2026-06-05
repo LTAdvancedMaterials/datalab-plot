@@ -32,6 +32,7 @@ _ENV_KEY = os.environ.get("DATALAB_API_KEY", "").strip()
 PICKER_COLUMNS = (
     "Select", "item_id", "name",
     "positive_electrode", "negative_electrode", "electrolyte",
+    "cathode_mass_mg",
     "label", "group", "color",
 )
 

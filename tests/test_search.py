@@ -11,7 +11,7 @@ from datalab_plot.search import (
 EXPECTED_COLUMNS = [
     "item_id", "name", "refcode", "type", "chemform",
     "positive_electrode", "negative_electrode", "electrolyte",
-    "last_modified", "collections",
+    "last_modified", "collections", "cathode_mass_mg",
 ]
 
 
