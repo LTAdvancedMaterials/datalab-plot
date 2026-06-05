@@ -80,13 +80,28 @@ def test_split_by_status_missing_column(echem_df):
 
 def test_cycle_summary(echem_df):
     summ = cycle_summary(echem_df)
-    assert {"cycle", "Charge_mAh", "Discharge_mAh", "CE"}.issubset(summ.columns)
+    assert {"cycle", "Charge_mAh", "Discharge_mAh", "Charge_Ah", "Discharge_Ah", "CE"}.issubset(
+        summ.columns
+    )
     assert len(summ) == 3
     assert list(summ["cycle"]) == [1, 2, 3]
+
+    # Capacity values must be in mAh (not Ah) — the navani path was
+    # previously multiplying mAh values by 1000, giving values 1000× too large.
+    # Conftest synthetic data has half-cycles of ~100 and ~95 mAh; navani may
+    # assign "charge" and "discharge" labels either way, so check both together.
+    all_cap_mah = np.concatenate([summ["Charge_mAh"].to_numpy(), summ["Discharge_mAh"].to_numpy()])
+    assert all_cap_mah.max() > 10.0, (
+        f"max capacity={all_cap_mah.max():.4f} — looks like Ah not mAh (units regression?)"
+    )
+    assert all_cap_mah.max() < 200.0, (
+        f"max capacity={all_cap_mah.max():.1f} — looks like μAh not mAh (units regression?)"
+    )
+
+    np.testing.assert_allclose(summ["Charge_Ah"], summ["Charge_mAh"] / 1000.0)
+    np.testing.assert_allclose(summ["Discharge_Ah"], summ["Discharge_mAh"] / 1000.0)
+
     ce = summ["CE"].to_numpy()
-    # Every cycle is identical synthetic data, so CE is constant and finite.
-    # (Don't pin the exact value — navani decides which half is charge vs
-    # discharge, and the 100/95 mAh ratio may land either way up.)
     assert np.all(np.isfinite(ce))
     np.testing.assert_allclose(ce, ce[0], rtol=1e-6)
     assert ce[0] > 0

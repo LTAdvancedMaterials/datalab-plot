@@ -67,6 +67,7 @@ class SummarySeries(NamedTuple):
     cycle: np.ndarray
     discharge_mah: np.ndarray
     ce_percent: np.ndarray
+    discharge_mah_g: np.ndarray | None = None
 
 
 class CycleTrace(NamedTuple):
@@ -96,13 +97,20 @@ def cycle_ids(df: pd.DataFrame) -> list[int]:
     return sorted({int(c) for c in df["full cycle"].dropna().unique() if c > 0})
 
 
-def summary_series(df: pd.DataFrame) -> SummarySeries:
-    """Discharge capacity (mAh) and Coulombic efficiency (%) vs cycle number."""
+def summary_series(df: pd.DataFrame, mass_g: float | None = None) -> SummarySeries:
+    """Discharge capacity (mAh) and Coulombic efficiency (%) vs cycle number.
+
+    If ``mass_g`` is provided (cathode active mass in grams), also populates
+    ``discharge_mah_g`` (specific discharge capacity in mAh/g).
+    """
     summ = cycle_summary(df)
+    discharge_mah = summ["Discharge_mAh"].to_numpy()
+    discharge_mah_g = discharge_mah / mass_g if (mass_g is not None and mass_g > 0) else None
     return SummarySeries(
         cycle=summ["cycle"].to_numpy(),
-        discharge_mah=summ["Discharge_mAh"].to_numpy(),
+        discharge_mah=discharge_mah,
         ce_percent=(100.0 * summ["CE"]).to_numpy(),
+        discharge_mah_g=discharge_mah_g,
     )
 
 

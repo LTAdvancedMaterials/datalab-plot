@@ -30,6 +30,23 @@ def test_summary_series(echem_df):
     assert len(s.discharge_mah) == 3
     assert len(s.ce_percent) == 3
     assert np.all(np.isfinite(s.ce_percent))
+    # No mass supplied → specific capacity is absent.
+    assert s.discharge_mah_g is None
+    # Values must be in mAh range (conftest uses ~95–100 mAh half-cycles).
+    assert s.discharge_mah.max() > 10.0, "discharge_mah looks like Ah (units regression?)"
+    assert s.discharge_mah.max() < 200.0, "discharge_mah looks like μAh (units regression?)"
+
+
+def test_summary_series_specific_capacity(echem_df):
+    mass_g = 0.010  # 10 mg
+    s = summary_series(echem_df, mass_g=mass_g)
+    assert s.discharge_mah_g is not None
+    np.testing.assert_allclose(s.discharge_mah_g, s.discharge_mah / mass_g)
+
+
+def test_summary_series_zero_mass_skips_specific(echem_df):
+    s = summary_series(echem_df, mass_g=0.0)
+    assert s.discharge_mah_g is None
 
 
 def test_voltage_capacity_series_all_cycles(echem_df):

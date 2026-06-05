@@ -193,11 +193,13 @@ def _normalise_neware_state(df: pd.DataFrame) -> pd.DataFrame:
 def cycle_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
     """Return a per-cycle summary DataFrame.
 
-    Adds ``Charge_mAh``, ``Discharge_mAh`` and ``CE`` (discharge/charge ratio).
-    Uses ``navani.echem.cycle_summary`` when available, falling back to a
-    grouped max() on ``full cycle`` -- which is the convention navani's
-    parsed dataframes follow (``Capacity`` is cumulative within a half cycle
-    and reset between cycles).
+    Adds ``Charge_mAh``, ``Discharge_mAh``, ``Charge_Ah``, ``Discharge_Ah``
+    and ``CE`` (discharge/charge ratio).  Uses ``navani.echem.cycle_summary``
+    when available, falling back to a grouped max() on ``full cycle``.
+
+    navani's ``Capacity`` column is in mAh (matching the raw cycler file
+    units).  Both the primary and fallback paths populate ``Charge_mAh`` /
+    ``Discharge_mAh`` first; ``_Ah`` columns are derived afterwards.
     """
     try:
         summary = ec.cycle_summary(raw_df)
@@ -208,14 +210,13 @@ def cycle_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
         out = pd.DataFrame(
             {
                 "cycle": pd.to_numeric(summary.index, downcast="integer"),
-                "Charge_Ah": summary["Charge Capacity"],
-                "Discharge_Ah": summary["Discharge Capacity"],
+                "Charge_mAh": summary["Charge Capacity"],
+                "Discharge_mAh": summary["Discharge Capacity"],
             }
         ).reset_index(drop=True)
     else:
         # Fallback: aggregate by full cycle. navani guarantees a "full cycle"
-        # column. Capacity is in mAh in navani's standard output -- treat it
-        # as mAh and convert to Ah for consistency with `summary`.
+        # column. Capacity is in mAh in navani's standard output.
         g = (
             raw_df.dropna(subset=["full cycle"])
             .groupby("full cycle")
@@ -233,13 +234,11 @@ def cycle_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
             .reset_index()
             .rename(columns={"full cycle": "cycle"})
         )
-        g["Charge_Ah"] = g["Charge_mAh"] / 1000.0
-        g["Discharge_Ah"] = g["Discharge_mAh"] / 1000.0
-        out = g[["cycle", "Charge_Ah", "Discharge_Ah"]]
+        out = g[["cycle", "Charge_mAh", "Discharge_mAh"]]
 
-    out["Charge_mAh"] = out["Charge_Ah"] * 1000.0
-    out["Discharge_mAh"] = out["Discharge_Ah"] * 1000.0
-    out["CE"] = (out["Discharge_Ah"] / out["Charge_Ah"]).where(out["Charge_Ah"] > 0)
+    out["Charge_Ah"] = out["Charge_mAh"] / 1000.0
+    out["Discharge_Ah"] = out["Discharge_mAh"] / 1000.0
+    out["CE"] = (out["Discharge_mAh"] / out["Charge_mAh"]).where(out["Charge_mAh"] > 0)
     out["cycle"] = out["cycle"].astype(int)
     return out.reset_index(drop=True)
 

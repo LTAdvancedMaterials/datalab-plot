@@ -173,7 +173,10 @@ def _layout(
 # ---------------------------------------------------------------------------
 
 def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0,
-                    style: PlotStyle | None = None) -> go.Figure:
+                    style: PlotStyle | None = None,
+                    masses: dict[str, float] | None = None) -> go.Figure:
+    specific = bool(masses)
+    y_axis_label = "Specific discharge capacity (mAh/g)" if specific else "Discharge capacity (mAh)"
     fig = make_subplots(
         rows=1,
         cols=2,
@@ -186,16 +189,24 @@ def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0,
         label = it["label"]
         if label not in raw:
             continue
-        s = summary_series(raw[label])
+        mass_g = masses.get(label) if masses else None
+        s = summary_series(raw[label], mass_g=mass_g)
+        if specific and s.discharge_mah_g is None:
+            continue
+        y_data = s.discharge_mah_g if specific else s.discharge_mah
+        y_unit = "mAh/g" if specific else "mAh"
         color = _rgba_to_css(colors[label])
         w = 1.6 * width_scale
         fig.add_trace(
             go.Scatter(
-                x=s.cycle, y=s.discharge_mah,
+                x=s.cycle, y=y_data,
                 **_trace_style(style, color, w),
                 name=label,
                 legendgroup=label,
-                hovertemplate="cycle %{x}<br>%{y:.1f} mAh<extra>%{fullData.name}</extra>",
+                hovertemplate=(
+                    f"cycle %{{x}}<br>%{{y:.2f}} {y_unit}"
+                    "<extra>%{fullData.name}</extra>"
+                ),
             ),
             row=1, col=1,
         )
@@ -211,9 +222,9 @@ def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0,
         )
     fig.update_xaxes(title_text="Cycle number", row=1, col=1)
     fig.update_xaxes(title_text="Cycle number", row=1, col=2)
-    fig.update_yaxes(title_text="Discharge capacity (mAh)", row=1, col=1)
+    fig.update_yaxes(title_text=y_axis_label, row=1, col=1)
     fig.update_yaxes(title_text="Coulombic efficiency (%)", row=1, col=2, range=[90, 102])
-    fig = _layout(fig, height, title="Cycle summary", style=style)
+    fig = _layout(fig, height, title="Cycle life", style=style)
     # make_subplots puts the subplot titles flush with the panel top, where
     # they collide with the mirrored border and the overall title. Drop the
     # panels and stack vertically: overall title (margin) · subplot titles ·
@@ -590,12 +601,13 @@ def _build_plotly(
     color_by_status: bool = False,
     width_scale: float = 1.0,
     style: PlotStyle | None = None,
+    masses: dict[str, float] | None = None,
 ) -> go.Figure:
     items = _normalise_items(payload)
     colors = _assign_colors(items)
     if mode == "summary":
         fig = _plotly_summary(items, raw, colors, height,
-                              width_scale=width_scale, style=style)
+                              width_scale=width_scale, style=style, masses=masses)
     elif mode == "voltage_capacity":
         fig = _plotly_voltage_capacity(items, raw, colors, height,
                                        width_scale=width_scale, style=style)
@@ -624,6 +636,37 @@ def _build_plotly(
 # Data acquisition (cached per item_id across reruns)
 # ---------------------------------------------------------------------------
 
+def _extract_cathode_mass_mg(item_dict: dict) -> float | None:
+    """Sum all ``quantity`` values on positive-electrode constituents (units: mg)."""
+    pos = item_dict.get("positive_electrode") or []
+    if not isinstance(pos, list):
+        return None
+    total = 0.0
+    found = False
+    for cons in pos:
+        if not isinstance(cons, dict):
+            continue
+        qty = cons.get("quantity")
+        if qty is None:
+            continue
+        try:
+            total += float(qty)
+            found = True
+        except (TypeError, ValueError):
+            continue
+    return total if found else None
+
+
+def _masses_keyed_by_label(payload: dict[str, dict[str, Any]]) -> dict[str, float]:
+    """Return cathode masses (g) keyed by plot label for items that have one."""
+    masses_by_id: dict[str, float | None] = st.session_state.get("cathode_masses", {})
+    return {
+        label: m
+        for label, spec in payload.items()
+        if (m := masses_by_id.get(spec["item_id"])) is not None
+    }
+
+
 def _ensure_data_for(
     client: DatalabPlotClient, item_ids: list[str], *, force: bool
 ) -> tuple[int, int, list[str], dict[str, str]]:
@@ -638,6 +681,7 @@ def _ensure_data_for(
     can retry from scratch.
     """
     raw: dict[str, pd.DataFrame] = st.session_state.setdefault("raw_data", {})
+    cathode_masses: dict[str, float | None] = st.session_state.setdefault("cathode_masses", {})
     skipped: list[str] = []
     errors: dict[str, str] = {}
     hits = misses = 0
@@ -648,6 +692,8 @@ def _ensure_data_for(
             client.purge(iid)
         try:
             item_dict = client.client.get_item(item_id=iid)
+            mass_mg = _extract_cathode_mass_mg(item_dict)
+            cathode_masses[iid] = mass_mg / 1000.0 if mass_mg is not None else None
             results = client.fetch_files_verbose(
                 iid, predicate=is_cycling_file, item=item_dict
             )
@@ -697,6 +743,7 @@ def _render_plot(
     width_scale: float = 1.0,
     style: PlotStyle | None = None,
     force_refresh: bool,
+    specific_capacity: bool = False,
 ) -> None:
     if not payload:
         st.info("Tick rows in the picker to plot.")
@@ -738,11 +785,23 @@ def _render_plot(
             return
 
     raw_by_label = _raw_keyed_by_label(payload)
+
+    masses: dict[str, float] | None = None
+    if mode == "summary" and specific_capacity:
+        masses = _masses_keyed_by_label(payload)
+        skipped_no_mass = [label for label in payload if label not in masses]
+        if skipped_no_mass:
+            st.warning(
+                "Skipped from specific capacity plot — no cathode mass recorded: "
+                + ", ".join(skipped_no_mass)
+            )
+
     try:
         fig = _build_plotly(
             payload, raw_by_label, mode, cycle, title or None, height_px,
             x_axis=x_axis, y_axis=y_axis, y2_axis=y2_axis,
             color_by_status=color_by_status, width_scale=width_scale, style=style,
+            masses=masses,
         )
     except Exception as exc:
         logger.exception("Plot build failed")

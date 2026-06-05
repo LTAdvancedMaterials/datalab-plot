@@ -74,7 +74,7 @@ def main() -> None:
     (
         mode, x_axis, y_axis, y2_axis, cycle, title,
         refresh_click, live, color_by_status,
-        width_frac, width_scale, height_px, style,
+        width_frac, width_scale, height_px, style, specific_capacity,
     ) = _plot_bar()
 
     payload = _selected_payload(picker_df)
@@ -87,7 +87,7 @@ def main() -> None:
         tuple(sorted((k, v.get("item_id"), v.get("group"), v.get("color"))
                      for k, v in payload.items())),
         mode, x_axis, y_axis, y2_axis, cycle, title,
-        color_by_status, width_frac, width_scale, height_px, style,
+        color_by_status, width_frac, width_scale, height_px, style, specific_capacity,
     )
     selection_changed = (
         plot_signature != st.session_state.get("last_plot_signature")
@@ -103,7 +103,7 @@ def main() -> None:
             client, payload, mode, cycle, title, width_frac, height_px,
             x_axis=x_axis, y_axis=y_axis, y2_axis=y2_axis,
             color_by_status=color_by_status, width_scale=width_scale, style=style,
-            force_refresh=refresh_click,
+            force_refresh=refresh_click, specific_capacity=specific_capacity,
         )
         st.session_state["last_plot_signature"] = plot_signature
 

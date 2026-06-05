@@ -138,7 +138,7 @@ def _axis_limit_inputs(has_y2: bool) -> tuple[str, str, str, str, str, str]:
 
 
 def _plot_bar() -> tuple[
-    str, str, str, str, int | None, str, bool, bool, bool, float, float, int, PlotStyle
+    str, str, str, str, int | None, str, bool, bool, bool, float, float, int, PlotStyle, bool
 ]:
     # Seed defaults the first time these widgets render. PLOT_OPTION_DEFAULTS
     # is the single source of truth, shared with the Reset button.
@@ -157,6 +157,22 @@ def _plot_bar() -> tuple[
 
     mode = st.session_state["ui_mode"]
     is_xy = mode == "xy"
+
+    # Specific-capacity toggle — only meaningful for the Cycle Life plot.
+    specific_capacity = False
+    if mode == "summary":
+        specific_capacity = bool(
+            st.toggle(
+                "Specific capacity (mAh/g)",
+                key="ui_specific_capacity",
+                help=(
+                    "Divide discharge capacity by cathode mass recorded in the "
+                    "datalab cell document (sum of positive-electrode constituent "
+                    "quantities, in mg). Cells with no cathode mass recorded are "
+                    "skipped with a warning."
+                ),
+            )
+        )
 
     # Cycle stays inline directly under the preset row, but only when the
     # active mode actually uses it.
@@ -271,5 +287,5 @@ def _plot_bar() -> tuple[
     return (
         mode, x_axis, y_axis, y2_axis, cycle, title,
         refresh_click, live, color_by_status,
-        width_pct / 100.0, float(width_scale), height_px, style,
+        width_pct / 100.0, float(width_scale), height_px, style, specific_capacity,
     )

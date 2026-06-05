@@ -84,7 +84,7 @@ _AXIS_TABLE: dict[str, tuple[str, str, bool]] = {
 
 PRESET_OPTIONS = (
     "V vs t", "V vs Q", "I vs t", "Q vs t", "V & I vs t",
-    "dQ/dV", "Summary", "Custom",
+    "dQ/dV", "Cycle Life", "Custom",
 )
 
 # Each entry: (mode, x_axis, y_axis, y2_axis). None means "leave current value".
@@ -95,7 +95,7 @@ PRESET_MAP: dict[str, tuple[str, str | None, str | None, str | None]] = {
     "Q vs t":     ("xy",                "time", "capacity", "none"),
     "V & I vs t": ("xy",                "time", "voltage",  "current"),
     "dQ/dV":      ("dqdv",              None,   None,       None),
-    "Summary":    ("summary",           None,   None,       None),
+    "Cycle Life": ("summary",           None,   None,       None),
     # Custom: switch to xy but don't overwrite the user's current axes.
     "Custom":     ("xy",                None,   None,       None),
 }
@@ -123,6 +123,7 @@ PLOT_OPTION_DEFAULTS: dict[str, object] = {
     "ui_marker_size": 6,
     "ui_xmin": "", "ui_xmax": "", "ui_ymin": "", "ui_ymax": "",
     "ui_y2min": "", "ui_y2max": "",
+    "ui_specific_capacity": False,
 }
 
 
