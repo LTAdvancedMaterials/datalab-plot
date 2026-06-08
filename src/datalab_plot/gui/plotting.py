@@ -260,7 +260,8 @@ def _plotly_summary(
         (fig_chg, chg_label),
         (fig_ce, "Coulombic efficiency (%)"),
     ):
-        fig.update_xaxes(title_text="Cycle number", range=x_range)
+        fig.update_xaxes(title_text="Cycle number", range=x_range,
+                         tickformat="d")  # integers only — never show 1.5 cycles
         fig.update_yaxes(title_text=y_title)
         _layout(fig, height, style=style, n_legend_items=len(items))
 

@@ -21,6 +21,12 @@ _MARKER_MODE_MAP: dict[str, str] = {
     "Points only": "markers",
 }
 
+# Default trace style per preset. Cycle Life is discrete (one point per cycle)
+# so markers help; everything else is continuous data where lines suffice.
+_PRESET_MARKER_DEFAULTS: dict[str, str] = {
+    "Cycle Life": "Lines + points",
+}
+
 
 def _apply_preset(preset: str) -> None:
     mode, x, y, y2 = PRESET_MAP[preset]
@@ -37,6 +43,12 @@ def _on_preset_change() -> None:
     preset = st.session_state.get("ui_preset")
     if preset in PRESET_MAP:
         _apply_preset(preset)
+    # Auto-reset trace style to a sensible default for each named preset.
+    # "Custom" is left untouched so the user's manual choice is preserved.
+    if preset and preset != "Custom":
+        st.session_state["ui_marker_mode"] = _PRESET_MARKER_DEFAULTS.get(
+            preset, "Lines"
+        )
 
 
 def _on_customize_edit() -> None:
