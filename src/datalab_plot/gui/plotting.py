@@ -149,9 +149,11 @@ def _layout(
     else:
         b_below = 90
     # Sanitise title: reject empty strings and the JS-serialised "undefined".
-    clean_title = title if title and title.lower() != "undefined" else None
+    # Use title_text (not title=) so an empty string actively clears any stale
+    # title that may be set on a cached Figure object from a previous render.
+    clean_title = title if title and title.lower() != "undefined" else ""
     fig.update_layout(
-        title=clean_title,
+        title_text=clean_title,
         template="plotly_white",
         margin=dict(
             l=60, r=20, t=50 if clean_title else 30,
@@ -212,6 +214,7 @@ def _plotly_summary(
     fig_chg = go.Figure()
     fig_ce = go.Figure()
 
+    all_cycles: list[int] = []
     for it in items:
         label = it["label"]
         if label not in raw:
@@ -220,6 +223,7 @@ def _plotly_summary(
         s = summary_series(raw[label], mass_g=mass_g)
         if specific and s.discharge_mah_g is None:
             continue
+        all_cycles.extend(int(c) for c in s.cycle)
         dch_y = s.discharge_mah_g if specific else s.discharge_mah
         chg_y = s.charge_mah_g if specific else s.charge_mah
         color = _rgba_to_css(colors[label])
@@ -242,12 +246,21 @@ def _plotly_summary(
             hovertemplate="cycle %{x}<br>%{y:.2f}%<extra>%{fullData.name}</extra>",
         ))
 
+    # Symmetric padding: same whitespace before cycle 1 and after last cycle.
+    # pad = 4% of the cycle span, minimum 0.5 cycles.
+    if all_cycles:
+        max_cycle = max(all_cycles)
+        pad = max(0.5, 0.04 * max(1, max_cycle - 1))
+        x_range = [1.0 - pad, max_cycle + pad]
+    else:
+        x_range = None
+
     for fig, y_title in (
         (fig_dch, dch_label),
         (fig_chg, chg_label),
         (fig_ce, "Coulombic efficiency (%)"),
     ):
-        fig.update_xaxes(title_text="Cycle number")
+        fig.update_xaxes(title_text="Cycle number", range=x_range)
         fig.update_yaxes(title_text=y_title)
         _layout(fig, height, style=style, n_legend_items=len(items))
 
