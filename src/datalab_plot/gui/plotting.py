@@ -28,6 +28,7 @@ from datalab_plot.gui.helpers import (
 )
 from datalab_plot.gui.picker_panel import _current_picker_df, _set_initial
 from datalab_plot.parsers.echem import (
+    cycle_summary,
     detect_status_column,
     is_cycling_file,
     load_echem,
@@ -704,6 +705,27 @@ def _raw_keyed_by_label(payload: dict[str, dict[str, Any]]) -> dict[str, pd.Data
     return out
 
 
+def _build_capacity_table(
+    summaries: dict[str, pd.DataFrame], cycle_n: int
+) -> pd.DataFrame:
+    """One-row-per-cell table of charge/discharge capacity and CE at ``cycle_n``."""
+    rows: list[dict[str, Any]] = []
+    for label, summ in summaries.items():
+        match = summ[summ["cycle"] == cycle_n]
+        if match.empty:
+            rows.append({"Cell": label, "Charge (mAh)": None, "Discharge (mAh)": None, "CE (%)": None})
+        else:
+            r = match.iloc[0]
+            ce = round(float(r["CE"]) * 100, 2) if pd.notna(r["CE"]) else None
+            rows.append({
+                "Cell": label,
+                "Charge (mAh)": round(float(r["Charge_mAh"]), 3),
+                "Discharge (mAh)": round(float(r["Discharge_mAh"]), 3),
+                "CE (%)": ce,
+            })
+    return pd.DataFrame(rows)
+
+
 def _render_plot(
     client: DatalabPlotClient,
     payload: dict[str, dict[str, Any]],
@@ -788,6 +810,14 @@ def _render_plot(
     # Persist for re-display on subsequent reruns (so checkbox clicks don't
     # have to rebuild + reship the figure).
     st.session_state["last_fig"] = fig
+    if mode == "summary":
+        st.session_state["last_cycle_summaries"] = {
+            label: cycle_summary(raw_by_label[label])
+            for label in payload
+            if label in raw_by_label
+        }
+    else:
+        st.session_state.pop("last_cycle_summaries", None)
     st.session_state["last_plot"] = {
         "payload": payload, "mode": mode, "cycle": cycle, "title": title,
         "x_axis": x_axis, "y_axis": y_axis, "y2_axis": y2_axis,
@@ -835,10 +865,20 @@ def _render_cached_figure() -> None:
 
     with holder:
         if isinstance(fig_or_tabs, list):
-            tab_widgets = st.tabs([title for title, _ in fig_or_tabs])
-            for tab, (_, fig) in zip(tab_widgets, fig_or_tabs, strict=True):
+            cycle_summaries = st.session_state.get("last_cycle_summaries")
+            extra_tabs = ["Capacity table"] if cycle_summaries else []
+            tab_widgets = st.tabs([title for title, _ in fig_or_tabs] + extra_tabs)
+            for tab, (_, fig) in zip(tab_widgets[:len(fig_or_tabs)], fig_or_tabs, strict=True):
                 with tab:
                     st.plotly_chart(fig, width="stretch", config=_PLOTLY_CONFIG)
+            if cycle_summaries:
+                with tab_widgets[-1]:
+                    cycle_n = st.number_input(
+                        "Cycle", min_value=1, value=2, step=1,
+                        key="capacity_table_cycle",
+                    )
+                    table = _build_capacity_table(cycle_summaries, int(cycle_n))
+                    st.dataframe(table, hide_index=True, use_container_width=True)
         else:
             # Stable key — same widget across reruns, so Streamlit/plotly diffs
             # rather than re-mounts when only ancillary widgets change.
