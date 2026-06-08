@@ -102,7 +102,9 @@ def _display_name(it: dict) -> str:
 
 def _layout(
     fig: go.Figure, height: int, title: str | None = None,
-    style: PlotStyle | None = None, *, secondary_y: bool = False,
+    style: PlotStyle | None = None, *,
+    secondary_y: bool = False,
+    n_legend_items: int = 0,
 ) -> go.Figure:
     style = style or PlotStyle()
     legend_cfg = {
@@ -112,7 +114,6 @@ def _layout(
         # than upward over the axis title.
         "below": dict(
             orientation="h", yanchor="top", y=-0.22, xanchor="center", x=0.5,
-            automargin=True,
         ),
         # Inset into the plot body (corner at 0.97/0.97 paper coords) so the
         # legend box sits clear of the mirrored border rather than straddling
@@ -135,12 +136,19 @@ def _layout(
         dom = fig.layout.xaxis.domain
         right = dom[1] if dom is not None else 1.0
         legend_cfg["x"] = right - 0.03
+    # Bottom margin scales with legend size in "below" mode. Estimate ~5
+    # entries per row at ~28 px/row; add 50 px of base padding below the axis.
+    if style.legend_mode == "below" and n_legend_items > 0:
+        rows = max(1, (n_legend_items + 4) // 5)
+        b_below = 50 + rows * 28
+    else:
+        b_below = 80
     fig.update_layout(
         title=title or None,
         template="plotly_white",
         margin=dict(
             l=60, r=20, t=50 if title else 30,
-            b=80 if style.legend_mode == "below" else 40,
+            b=b_below if style.legend_mode == "below" else 40,
         ),
         showlegend=(style.legend_mode != "none"),
         legend=legend_cfg,
@@ -234,7 +242,7 @@ def _plotly_summary(
     ):
         fig.update_xaxes(title_text="Cycle number")
         fig.update_yaxes(title_text=y_title)
-        _layout(fig, height, style=style)
+        _layout(fig, height, style=style, n_legend_items=len(items))
 
     fig_ce.update_yaxes(range=[90, 102])
 
@@ -320,7 +328,8 @@ def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.
 
     fig.update_xaxes(title_text="Capacity (mAh)")
     fig.update_yaxes(title_text="Voltage (V)")
-    fig = _layout(fig, height, title="Voltage vs capacity, all cycles", style=style)
+    fig = _layout(fig, height, title="Voltage vs capacity, all cycles", style=style,
+                  n_legend_items=len(items))
     if n_colorbars:
         # Widen the right margin so the colorbars don't overlap the plot.
         fig.update_layout(margin=dict(r=20 + 90 * n_colorbars))
@@ -347,7 +356,8 @@ def _plotly_dqdv(items, raw, colors, cycle, height, width_scale: float = 1.0,
             )
     fig.update_xaxes(title_text="Voltage (V)")
     fig.update_yaxes(title_text="dQ/dV (mA/V)")
-    return _layout(fig, height, title=f"dQ/dV, cycle {cycle}", style=style)
+    return _layout(fig, height, title=f"dQ/dV, cycle {cycle}", style=style,
+                   n_legend_items=len(items))
 
 
 def _plotly_voltage_time(items, raw, colors, height, width_scale: float = 1.0,
@@ -369,7 +379,8 @@ def _plotly_voltage_time(items, raw, colors, height, width_scale: float = 1.0,
         )
     fig.update_xaxes(title_text="Time (h)")
     fig.update_yaxes(title_text="Voltage (V)")
-    return _layout(fig, height, title="Voltage vs time", style=style)
+    return _layout(fig, height, title="Voltage vs time", style=style,
+                   n_legend_items=len(items))
 
 
 # --- Generic XY plot --------------------------------------------------------
@@ -584,7 +595,8 @@ def _plotly_xy(
     else:
         fig.update_yaxes(title_text=ylabel)
         title_text = f"{ytitle} vs {xtitle}{suffix}"
-    fig = _layout(fig, height, title=title_text, style=style, secondary_y=has_y2)
+    fig = _layout(fig, height, title=title_text, style=style, secondary_y=has_y2,
+                  n_legend_items=len(items))
     if has_y2:
         # The secondary y-axis would otherwise draw its own horizontal
         # gridlines, offset from the primary axis's — a confusing double
