@@ -89,6 +89,13 @@ def _trace_style(
     return dict(mode="lines", line=line_cfg)
 
 
+def _display_name(it: dict) -> str:
+    """Legend / trace name: 'My Label  [CEL-085]' or just 'CEL-085' when identical."""
+    label = it["label"]
+    iid = it.get("item_id", "")
+    return label if (label == iid or not iid) else f"{label}  [{iid}]"
+
+
 # ---------------------------------------------------------------------------
 # Layout
 # ---------------------------------------------------------------------------
@@ -105,6 +112,7 @@ def _layout(
         # than upward over the axis title.
         "below": dict(
             orientation="h", yanchor="top", y=-0.22, xanchor="center", x=0.5,
+            automargin=True,
         ),
         # Inset into the plot body (corner at 0.97/0.97 paper coords) so the
         # legend box sits clear of the mirrored border rather than straddling
@@ -204,17 +212,18 @@ def _plotly_summary(
         hover_cap = (
             f"cycle %{{x}}<br>%{{y:.2f}} {cap_unit}<extra>%{{fullData.name}}</extra>"
         )
+        dname = _display_name(it)
         fig_dch.add_trace(go.Scatter(
             x=s.cycle, y=dch_y, **_trace_style(style, color, w),
-            name=label, hovertemplate=hover_cap,
+            name=dname, hovertemplate=hover_cap,
         ))
         fig_chg.add_trace(go.Scatter(
             x=s.cycle, y=chg_y, **_trace_style(style, color, w),
-            name=label, hovertemplate=hover_cap,
+            name=dname, hovertemplate=hover_cap,
         ))
         fig_ce.add_trace(go.Scatter(
             x=s.cycle, y=s.ce_percent, **_trace_style(style, color, w),
-            name=label,
+            name=dname,
             hovertemplate="cycle %{x}<br>%{y:.2f}%<extra>%{fullData.name}</extra>",
         ))
 
@@ -260,13 +269,14 @@ def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.
         # One invisible legend-only trace per cell so the legend stays compact
         # (one entry per cell, coloured with the colormap's mid-point) and the
         # many real per-cycle traces below share its legendgroup for toggling.
+        dname = _display_name(it)
         legend_color = _rgba_to_css(cmap(0.5))
         legend_w = 3 * width_scale
         fig.add_trace(
             go.Scatter(
                 x=[None], y=[None],
                 **_trace_style(style, legend_color, legend_w),
-                name=f"{label}  ({cmap_name})",
+                name=f"{dname}  ({cmap_name})",
                 legendgroup=label, showlegend=True,
             )
         )
@@ -279,7 +289,7 @@ def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.
                     **_trace_style(style, color, 1.0 * width_scale),
                     legendgroup=label, showlegend=False,
                     hovertemplate=(
-                        f"<b>{label}</b> · cycle {t.cycle_id}<br>"
+                        f"<b>{dname}</b> · cycle {t.cycle_id}<br>"
                         "%{x:.2f} mAh<br>%{y:.3f} V<extra></extra>"
                     ),
                 )
@@ -298,7 +308,7 @@ def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.
                         color=[traces[0].cycle_id],
                         showscale=True,
                         colorbar=dict(
-                            title=dict(text=f"{label}<br>cycle", side="right"),
+                            title=dict(text=f"{dname}<br>cycle", side="right"),
                             len=0.92, thickness=14,
                             x=1.02 + 0.16 * n_colorbars,
                         ),
@@ -325,12 +335,13 @@ def _plotly_dqdv(items, raw, colors, cycle, height, width_scale: float = 1.0,
         if label not in raw:
             continue
         color = _rgba_to_css(colors[label])
+        dname = _display_name(it)
         for t in dqdv_series(raw[label], cycle):
             fig.add_trace(
                 go.Scatter(
                     x=t.x, y=t.y,
                     **_trace_style(style, color, 1.4 * width_scale),
-                    name=label, connectgaps=False,
+                    name=dname, connectgaps=False,
                     hovertemplate="%{x:.3f} V<br>%{y:.2f} mA/V<extra>%{fullData.name}</extra>",
                 )
             )
@@ -352,7 +363,7 @@ def _plotly_voltage_time(items, raw, colors, height, width_scale: float = 1.0,
             go.Scatter(
                 x=s.x, y=s.y,
                 **_trace_style(style, color, 1.0 * width_scale),
-                name=label,
+                name=_display_name(it),
                 hovertemplate="%{x:.2f} h<br>%{y:.3f} V<extra>%{fullData.name}</extra>",
             )
         )
@@ -432,15 +443,16 @@ def _xy_primary_cells(
             xs = _axis_series(df, x_axis)
             ys = _axis_series(df, y_axis)
         cell_color = _rgba_to_css(colors[label])
+        dname = _display_name(it)
         add({
             "x": xs, "y": ys,
             **_trace_style(style, cell_color, base_w),
-            "name": (f"{label} (left)" if has_y2 else label),
+            "name": (f"{dname} (left)" if has_y2 else dname),
             "connectgaps": False,
             "legendgroup": label,
             "showlegend": True,
             "hovertemplate": (
-                f"<b>{label}</b><br>"
+                f"<b>{dname}</b><br>"
                 "%{x:.3f}<br>"
                 f"%{{y:.3f}} {ylabel.split('(')[-1].rstrip(')')}"
                 "<extra></extra>"
@@ -466,10 +478,11 @@ def _xy_secondary(
             xs = _axis_series(df, x_axis)
             ys = _axis_series(df, y2_axis)
         cell_color = _desaturate_css(colors[label], amount=0.5)
+        dname = _display_name(it)
         add({
             "x": xs, "y": ys,
             **_trace_style(style, cell_color, base_w, dash="dash", secondary=True),
-            "name": f"{label} ({y2_axis})",
+            "name": f"{dname} ({y2_axis})",
             "connectgaps": False,
             # When colouring by status, the left legend is by step name;
             # the right legend keeps per-cell entries (one per cell) so
@@ -477,7 +490,7 @@ def _xy_secondary(
             "legendgroup": (f"y2:{label}" if color_by_status else label),
             "showlegend": True if color_by_status else False,
             "hovertemplate": (
-                f"<b>{label}</b><br>"
+                f"<b>{dname}</b><br>"
                 "%{x:.3f}<br>"
                 f"%{{y:.3f}} {y2label.split('(')[-1].rstrip(')')}"
                 "<extra></extra>"
@@ -716,7 +729,10 @@ def _build_capacity_table(
         match = summ[summ["cycle"] == cycle_n]
         iid = item_ids.get(label, "") if item_ids else ""
         if match.empty:
-            rows.append({"Cell": label, "Item ID": iid, "Charge (mAh)": None, "Discharge (mAh)": None, "CE (%)": None})
+            rows.append({
+                "Cell": label, "Item ID": iid,
+                "Charge (mAh)": None, "Discharge (mAh)": None, "CE (%)": None,
+            })
         else:
             r = match.iloc[0]
             ce = round(float(r["CE"]) * 100, 2) if pd.notna(r["CE"]) else None
