@@ -107,13 +107,20 @@ def _layout(
     n_legend_items: int = 0,
 ) -> go.Figure:
     style = style or PlotStyle()
+    # Cap the "below" legend at 160 px; a scrollbar appears beyond that so
+    # the legend never extends past the figure boundary regardless of item count.
+    # y=-0.30 pushes the legend's top anchor below the x-axis title (≈ 0.22
+    # paper units above the axis baseline isn't enough when the title itself
+    # takes ~0.06–0.08 paper units). The bottom margin scales with the capped
+    # number of rows; assume 3 entries/row (long cell names), max 6 rows before
+    # the scrollbar takes over.
+    _LEGEND_MAX_H = 160  # px; scrollbar kicks in above this
+    _PX_PER_ROW = 26
+    _ITEMS_PER_ROW = 3
     legend_cfg = {
-        # yanchor="top": the legend's TOP edge is pinned just below the
-        # x-axis title, so when it wraps to a second row the extra rows
-        # grow *downward* (into the auto-expanding bottom margin) rather
-        # than upward over the axis title.
         "below": dict(
-            orientation="h", yanchor="top", y=-0.22, xanchor="center", x=0.5,
+            orientation="h", yanchor="top", y=-0.30, xanchor="center", x=0.5,
+            maxheight=_LEGEND_MAX_H,
         ),
         # Inset into the plot body (corner at 0.97/0.97 paper coords) so the
         # legend box sits clear of the mirrored border rather than straddling
@@ -136,18 +143,18 @@ def _layout(
         dom = fig.layout.xaxis.domain
         right = dom[1] if dom is not None else 1.0
         legend_cfg["x"] = right - 0.03
-    # Bottom margin scales with legend size in "below" mode. Estimate ~5
-    # entries per row at ~28 px/row; add 50 px of base padding below the axis.
     if style.legend_mode == "below" and n_legend_items > 0:
-        rows = max(1, (n_legend_items + 4) // 5)
-        b_below = 50 + rows * 28
+        rows = min(6, max(1, (n_legend_items + _ITEMS_PER_ROW - 1) // _ITEMS_PER_ROW))
+        b_below = 80 + rows * _PX_PER_ROW
     else:
-        b_below = 80
+        b_below = 90
+    # Sanitise title: reject empty strings and the JS-serialised "undefined".
+    clean_title = title if title and title.lower() != "undefined" else None
     fig.update_layout(
-        title=title or None,
+        title=clean_title,
         template="plotly_white",
         margin=dict(
-            l=60, r=20, t=50 if title else 30,
+            l=60, r=20, t=50 if clean_title else 30,
             b=b_below if style.legend_mode == "below" else 40,
         ),
         showlegend=(style.legend_mode != "none"),
@@ -651,7 +658,7 @@ def _build_plotly(
         )
     else:
         raise ValueError(f"Unknown mode {mode!r}")
-    if title:
+    if title and title.lower() != "undefined":
         fig.update_layout(title_text=title)
     return fig
 
