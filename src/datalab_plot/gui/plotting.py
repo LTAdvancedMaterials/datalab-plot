@@ -706,19 +706,23 @@ def _raw_keyed_by_label(payload: dict[str, dict[str, Any]]) -> dict[str, pd.Data
 
 
 def _build_capacity_table(
-    summaries: dict[str, pd.DataFrame], cycle_n: int
+    summaries: dict[str, pd.DataFrame],
+    cycle_n: int,
+    item_ids: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     """One-row-per-cell table of charge/discharge capacity and CE at ``cycle_n``."""
     rows: list[dict[str, Any]] = []
     for label, summ in summaries.items():
         match = summ[summ["cycle"] == cycle_n]
+        iid = item_ids.get(label, "") if item_ids else ""
         if match.empty:
-            rows.append({"Cell": label, "Charge (mAh)": None, "Discharge (mAh)": None, "CE (%)": None})
+            rows.append({"Cell": label, "Item ID": iid, "Charge (mAh)": None, "Discharge (mAh)": None, "CE (%)": None})
         else:
             r = match.iloc[0]
             ce = round(float(r["CE"]) * 100, 2) if pd.notna(r["CE"]) else None
             rows.append({
                 "Cell": label,
+                "Item ID": iid,
                 "Charge (mAh)": round(float(r["Charge_mAh"]), 3),
                 "Discharge (mAh)": round(float(r["Discharge_mAh"]), 3),
                 "CE (%)": ce,
@@ -877,7 +881,9 @@ def _render_cached_figure() -> None:
                         "Cycle", min_value=1, value=2, step=1,
                         key="capacity_table_cycle",
                     )
-                    table = _build_capacity_table(cycle_summaries, int(cycle_n))
+                    payload = cfg.get("payload", {})
+                    item_ids = {label: spec["item_id"] for label, spec in payload.items()}
+                    table = _build_capacity_table(cycle_summaries, int(cycle_n), item_ids)
                     st.dataframe(table, hide_index=True, use_container_width=True)
         else:
             # Stable key — same widget across reruns, so Streamlit/plotly diffs
