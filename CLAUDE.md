@@ -81,6 +81,34 @@ Streamlit app), `picker.py` (ipywidgets selector for Jupyter).
   (`voltage_time_series`) and cycle-summary plots keep rests; capacity-
   domain plots don't.
 
+## Visual consistency between plot types
+
+All Plotly figure builders in `gui/plotting.py` must follow these shared
+conventions. Work on any single plot type should not diverge from the others.
+
+- **All figures go through `_layout()`** for margins, legend, font, grid, and
+  borders. Never call `fig.update_layout()` with styling params directly in a
+  figure builder — styling belongs in `_layout` or `PlotStyle`.
+- **Colors come from `_assign_colors()`** (per-cell, tab10 or group-cmap) or
+  `cycle_cmap()` (per-cycle gradient on V-Q only). Do not hard-code hex colors
+  in figure builders.
+- **Line widths are always `N * width_scale`**, where `N` is a per-plot-type
+  base (1.0–1.6). This lets the width control in the sidebar scale all plots
+  uniformly.
+- **Trace legend names use `_display_name(it)`**, not the raw `label`. This
+  shows `"My Label  [CEL-085]"` when the label and item ID differ, so
+  individual cells remain identifiable in large repeat stacks (GitHub #19).
+- **Hover templates always include the cell name in bold** as
+  `<b>{display_name}</b>` so the user can read which cell a point belongs to
+  without looking at the legend.
+- **Half-cycle NaN gaps** (`split_half_cycles`) must be applied consistently:
+  any capacity-domain or step-split trace that spans multiple half-cycles
+  needs the gap separator so lines don't connect across the charge/discharge
+  boundary. Omitting the gap on one plot type while another uses it is a bug.
+- **`_xy_primary_status` traces are named by status value**, not by cell — this
+  is intentional (one legend entry per step type shared across all cells).
+  All other plot types are named per cell via `_display_name`.
+
 ## Working in this repo
 
 Dev tools are in the `dev` dependency group. Setup:
