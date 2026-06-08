@@ -246,12 +246,8 @@ def _plotly_summary(
             hovertemplate="cycle %{x}<br>%{y:.2f}%<extra>%{fullData.name}</extra>",
         ))
 
-    # Symmetric padding: same whitespace before cycle 1 and after last cycle.
-    # pad = 4% of the cycle span, minimum 0.5 cycles.
     if all_cycles:
-        max_cycle = max(all_cycles)
-        pad = max(0.5, 0.04 * max(1, max_cycle - 1))
-        x_range = [1.0 - pad, max_cycle + pad]
+        x_range = [0.5, max(all_cycles) + 0.5]
     else:
         x_range = None
 
@@ -264,8 +260,6 @@ def _plotly_summary(
                          tickformat="d")  # integers only — never show 1.5 cycles
         fig.update_yaxes(title_text=y_title)
         _layout(fig, height, style=style, n_legend_items=len(items))
-
-    fig_ce.update_yaxes(range=[90, 102])
 
     return [
         ("Discharge capacity", fig_dch),
