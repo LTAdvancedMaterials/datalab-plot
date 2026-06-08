@@ -61,6 +61,23 @@ def _figure_to_csv(fig, style: PlotStyle | None = None) -> str:
     return pd.DataFrame(rows, columns=["trace", "x", "y"]).to_csv(index=False)
 
 
+def _figure_to_csv_tabs(tabs: list, style: PlotStyle | None = None) -> str:
+    """Long-format CSV for a list of ``(tab_title, figure)`` pairs.
+
+    Same schema as :func:`_figure_to_csv` but with an extra ``tab`` column
+    so rows from different panels are distinguishable.
+    """
+    frames: list[pd.DataFrame] = []
+    for tab_title, fig in tabs:
+        df = pd.read_csv(pd.io.common.StringIO(_figure_to_csv(fig, style)))
+        if not df.empty:
+            df.insert(0, "tab", tab_title)
+            frames.append(df)
+    if not frames:
+        return ""
+    return pd.concat(frames, ignore_index=True).to_csv(index=False)
+
+
 def _png_export_section(style: PlotStyle | None = None) -> None:
     """Export controls for the current figure.
 
@@ -68,9 +85,12 @@ def _png_export_section(style: PlotStyle | None = None) -> None:
     figure directly (pixel-accurate, high-res via the chart's scale=3
     config). CSV: the data behind every visible trace, long-format,
     clipped to the manual axis limits when those are set.
+
+    When the current plot is a tabbed Cycle Life view the CSV contains all
+    three tabs with an extra ``tab`` column.
     """
-    fig = st.session_state.get("last_fig")
-    if fig is None:
+    fig_or_tabs = st.session_state.get("last_fig")
+    if fig_or_tabs is None:
         return
     cols = st.columns([3, 1])
     cols[0].caption(
@@ -78,7 +98,10 @@ def _png_export_section(style: PlotStyle | None = None) -> None:
         "top-right toolbar (high-res, exactly what you see). **CSV** →"
     )
     try:
-        csv = _figure_to_csv(fig, style)
+        if isinstance(fig_or_tabs, list):
+            csv = _figure_to_csv_tabs(fig_or_tabs, style)
+        else:
+            csv = _figure_to_csv(fig_or_tabs, style)
     except Exception:
         logger.warning("CSV export failed", exc_info=True)
         csv = ""

@@ -173,19 +173,21 @@ def _layout(
 # (_build_plotly) can serve both Plot-click and live-update reruns.
 # ---------------------------------------------------------------------------
 
-def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0,
-                    style: PlotStyle | None = None,
-                    masses: dict[str, float] | None = None) -> go.Figure:
+def _plotly_summary(
+    items, raw, colors, height, width_scale: float = 1.0,
+    style: PlotStyle | None = None,
+    masses: dict[str, float] | None = None,
+) -> list[tuple[str, go.Figure]]:
+    """Return three (tab_title, figure) pairs: discharge, charge, CE."""
     specific = bool(masses)
-    y_axis_label = "Specific discharge capacity (mAh/g)" if specific else "Discharge capacity (mAh)"
-    fig = make_subplots(
-        rows=1,
-        cols=2,
-        subplot_titles=("Discharge capacity", "Coulombic efficiency"),
-        # Wide gap so the right panel's "Coulombic efficiency (%)" axis title
-        # isn't crowded by the left panel.
-        horizontal_spacing=0.2,
-    )
+    cap_unit = "mAh/g" if specific else "mAh"
+    dch_label = f"Discharge capacity ({cap_unit})"
+    chg_label = f"Charge capacity ({cap_unit})"
+
+    fig_dch = go.Figure()
+    fig_chg = go.Figure()
+    fig_ce = go.Figure()
+
     for it in items:
         label = it["label"]
         if label not in raw:
@@ -194,47 +196,43 @@ def _plotly_summary(items, raw, colors, height, width_scale: float = 1.0,
         s = summary_series(raw[label], mass_g=mass_g)
         if specific and s.discharge_mah_g is None:
             continue
-        y_data = s.discharge_mah_g if specific else s.discharge_mah
-        y_unit = "mAh/g" if specific else "mAh"
+        dch_y = s.discharge_mah_g if specific else s.discharge_mah
+        chg_y = s.charge_mah_g if specific else s.charge_mah
         color = _rgba_to_css(colors[label])
         w = 1.6 * width_scale
-        fig.add_trace(
-            go.Scatter(
-                x=s.cycle, y=y_data,
-                **_trace_style(style, color, w),
-                name=label,
-                legendgroup=label,
-                hovertemplate=(
-                    f"cycle %{{x}}<br>%{{y:.2f}} {y_unit}"
-                    "<extra>%{fullData.name}</extra>"
-                ),
-            ),
-            row=1, col=1,
+        hover_cap = (
+            f"cycle %{{x}}<br>%{{y:.2f}} {cap_unit}<extra>%{{fullData.name}}</extra>"
         )
-        fig.add_trace(
-            go.Scatter(
-                x=s.cycle, y=s.ce_percent,
-                **_trace_style(style, color, w),
-                name=label,
-                legendgroup=label, showlegend=False,
-                hovertemplate="cycle %{x}<br>%{y:.2f}%<extra>%{fullData.name}</extra>",
-            ),
-            row=1, col=2,
-        )
-    fig.update_xaxes(title_text="Cycle number", row=1, col=1)
-    fig.update_xaxes(title_text="Cycle number", row=1, col=2)
-    fig.update_yaxes(title_text=y_axis_label, row=1, col=1)
-    fig.update_yaxes(title_text="Coulombic efficiency (%)", row=1, col=2, range=[90, 102])
-    fig = _layout(fig, height, title="Cycle life", style=style)
-    # make_subplots puts the subplot titles flush with the panel top, where
-    # they collide with the mirrored border and the overall title. Drop the
-    # panels and stack vertically: overall title (margin) · subplot titles ·
-    # panels.
-    fig.update_yaxes(domain=[0.0, 0.88])
-    for ann in fig.layout.annotations[:2]:
-        ann.update(y=0.93, yanchor="bottom")
-    fig.update_layout(margin_t=80)
-    return fig
+        fig_dch.add_trace(go.Scatter(
+            x=s.cycle, y=dch_y, **_trace_style(style, color, w),
+            name=label, hovertemplate=hover_cap,
+        ))
+        fig_chg.add_trace(go.Scatter(
+            x=s.cycle, y=chg_y, **_trace_style(style, color, w),
+            name=label, hovertemplate=hover_cap,
+        ))
+        fig_ce.add_trace(go.Scatter(
+            x=s.cycle, y=s.ce_percent, **_trace_style(style, color, w),
+            name=label,
+            hovertemplate="cycle %{x}<br>%{y:.2f}%<extra>%{fullData.name}</extra>",
+        ))
+
+    for fig, y_title in (
+        (fig_dch, dch_label),
+        (fig_chg, chg_label),
+        (fig_ce, "Coulombic efficiency (%)"),
+    ):
+        fig.update_xaxes(title_text="Cycle number")
+        fig.update_yaxes(title_text=y_title)
+        _layout(fig, height, style=style)
+
+    fig_ce.update_yaxes(range=[90, 102])
+
+    return [
+        ("Discharge capacity", fig_dch),
+        ("Charge capacity", fig_chg),
+        ("Coulombic efficiency", fig_ce),
+    ]
 
 
 def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.0,
@@ -603,12 +601,12 @@ def _build_plotly(
     width_scale: float = 1.0,
     style: PlotStyle | None = None,
     masses: dict[str, float] | None = None,
-) -> go.Figure:
+) -> go.Figure | list[tuple[str, go.Figure]]:
     items = _normalise_items(payload)
     colors = _assign_colors(items)
     if mode == "summary":
-        fig = _plotly_summary(items, raw, colors, height,
-                              width_scale=width_scale, style=style, masses=masses)
+        return _plotly_summary(items, raw, colors, height,
+                               width_scale=width_scale, style=style, masses=masses)
     elif mode == "voltage_capacity":
         fig = _plotly_voltage_capacity(items, raw, colors, height,
                                        width_scale=width_scale, style=style)
@@ -628,7 +626,6 @@ def _build_plotly(
     else:
         raise ValueError(f"Unknown mode {mode!r}")
     if title:
-        # title_text (not title=) so a builder's title positioning survives.
         fig.update_layout(title_text=title)
     return fig
 
@@ -803,14 +800,29 @@ def _render_plot(
     # plot area so the figure persists across reruns at a stable widget key.
 
 
+_PLOTLY_CONFIG = {
+    "displaylogo": False,
+    # The modebar camera button exports the live Plotly figure directly —
+    # pixel-accurate, no matplotlib re-render. scale=3 gives a high-res PNG.
+    "toImageButtonOptions": {
+        "format": "png",
+        "filename": "datalab_plot",
+        "scale": 3,
+    },
+}
+
+
 def _render_cached_figure() -> None:
     """Re-display the last rendered figure across reruns at a stable widget key.
 
     This keeps the plot visible while the user toggles checkboxes without
     rebuilding or re-shipping the plotly figure on every click.
+
+    When ``last_fig`` is a list of ``(tab_title, figure)`` pairs (Cycle Life
+    mode) the panels are rendered inside Streamlit tabs.
     """
-    fig = st.session_state.get("last_fig")
-    if fig is None:
+    fig_or_tabs = st.session_state.get("last_fig")
+    if fig_or_tabs is None:
         return
     cfg = st.session_state.get("last_plot", {})
     width_frac = cfg.get("width_frac", 0.9)
@@ -820,23 +832,21 @@ def _render_cached_figure() -> None:
         holder = cols[1]
     else:
         holder = st.container()
+
     with holder:
-        # Stable key — same widget across reruns, so Streamlit/plotly diff
-        # rather than re-mount when only ancillary widgets change.
-        st.plotly_chart(
-            fig, width="stretch", key="main_plot",
-            config={
-                "displaylogo": False,
-                # The modebar camera button exports the live Plotly figure
-                # directly — pixel-accurate, no matplotlib re-render, no
-                # extra dependency. scale=3 gives a high-res PNG.
-                "toImageButtonOptions": {
-                    "format": "png",
-                    "filename": "datalab_plot",
-                    "scale": 3,
-                },
-            },
-        )
+        if isinstance(fig_or_tabs, list):
+            tab_widgets = st.tabs([title for title, _ in fig_or_tabs])
+            for tab, (_, fig) in zip(tab_widgets, fig_or_tabs, strict=True):
+                with tab:
+                    st.plotly_chart(fig, width="stretch", config=_PLOTLY_CONFIG)
+        else:
+            # Stable key — same widget across reruns, so Streamlit/plotly diffs
+            # rather than re-mounts when only ancillary widgets change.
+            st.plotly_chart(
+                fig_or_tabs, width="stretch", key="main_plot",
+                config=_PLOTLY_CONFIG,
+            )
+
     hits, misses = cfg.get("hits", 0), cfg.get("misses", 0)
     if hits + misses:
         st.caption(

@@ -62,12 +62,14 @@ def cycle_cmap(cell_idx: int) -> tuple[Colormap, str]:
 
 
 class SummarySeries(NamedTuple):
-    """Per-cycle discharge capacity and Coulombic efficiency for one cell."""
+    """Per-cycle charge/discharge capacity and Coulombic efficiency for one cell."""
 
     cycle: np.ndarray
     discharge_mah: np.ndarray
+    charge_mah: np.ndarray
     ce_percent: np.ndarray
     discharge_mah_g: np.ndarray | None = None
+    charge_mah_g: np.ndarray | None = None
 
 
 class CycleTrace(NamedTuple):
@@ -98,19 +100,22 @@ def cycle_ids(df: pd.DataFrame) -> list[int]:
 
 
 def summary_series(df: pd.DataFrame, mass_g: float | None = None) -> SummarySeries:
-    """Discharge capacity (mAh) and Coulombic efficiency (%) vs cycle number.
+    """Charge/discharge capacity (mAh) and Coulombic efficiency (%) vs cycle number.
 
     If ``mass_g`` is provided (cathode active mass in grams), also populates
-    ``discharge_mah_g`` (specific discharge capacity in mAh/g).
+    ``discharge_mah_g`` and ``charge_mah_g`` (specific capacities in mAh/g).
     """
     summ = cycle_summary(df)
     discharge_mah = summ["Discharge_mAh"].to_numpy()
-    discharge_mah_g = discharge_mah / mass_g if (mass_g is not None and mass_g > 0) else None
+    charge_mah = summ["Charge_mAh"].to_numpy()
+    has_mass = mass_g is not None and mass_g > 0
     return SummarySeries(
         cycle=summ["cycle"].to_numpy(),
         discharge_mah=discharge_mah,
+        charge_mah=charge_mah,
         ce_percent=(100.0 * summ["CE"]).to_numpy(),
-        discharge_mah_g=discharge_mah_g,
+        discharge_mah_g=discharge_mah / mass_g if has_mass else None,
+        charge_mah_g=charge_mah / mass_g if has_mass else None,
     )
 
 
