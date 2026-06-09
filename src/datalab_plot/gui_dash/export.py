@@ -45,12 +45,12 @@ def layout() -> html.Div:
             dbc.Row(
                 [
                     dbc.Col(
-                        html.Small(
+                        html.Span(
                             [
                                 "PNG: hover the plot and click the camera icon. ",
                                 "CSV: ",
                             ],
-                            className="text-muted",
+                            className="ui-caption",
                         ),
                         width=True,
                     ),
@@ -74,7 +74,7 @@ def layout() -> html.Div:
                         dbc.Label(
                             "Save current plot:",
                             html_for="export-save-name",
-                            className="small mb-0",
+                            className="ui-field-label mb-0",
                         ),
                         width="auto",
                         className="d-flex align-items-center",
@@ -100,7 +100,7 @@ def layout() -> html.Div:
                         width="auto",
                     ),
                     dbc.Col(
-                        html.Div(id="export-save-feedback", className="small"),
+                        html.Div(id="export-save-feedback", className="ui-feedback"),
                         width=True,
                     ),
                 ],
@@ -113,7 +113,7 @@ def layout() -> html.Div:
                         dbc.Label(
                             "Load saved plot:",
                             html_for="export-load-select",
-                            className="small mb-0",
+                            className="ui-field-label mb-0",
                         ),
                         width="auto",
                         className="d-flex align-items-center",
@@ -151,7 +151,7 @@ def layout() -> html.Div:
                         width="auto",
                     ),
                     dbc.Col(
-                        html.Div(id="export-load-feedback", className="small"),
+                        html.Div(id="export-load-feedback", className="ui-feedback"),
                         width=True,
                     ),
                 ],
@@ -250,17 +250,17 @@ def register_callbacks(app: dash.Dash) -> None:
             path = save_plot_config(name, config)
         except ValueError as exc:
             return no_update, no_update, html.Span(
-                f"Save failed: {exc}", className="text-danger"
+                f"Save failed: {exc}", className="ui-feedback-danger"
             )
         except OSError:
             logger.warning("Could not write saved plot file", exc_info=True)
             return no_update, no_update, html.Span(
-                "Save failed (disk error)", className="text-danger"
+                "Save failed (disk error)", className="ui-feedback-danger"
             )
         return (
             (version or 0) + 1,
             "",
-            html.Span(f"Saved to {path.name}", className="text-success"),
+            html.Span(f"Saved to {path.name}", className="ui-feedback-success"),
         )
 
     # --- Refresh the Load select options whenever a save/delete happens
@@ -291,12 +291,12 @@ def register_callbacks(app: dash.Dash) -> None:
         except OSError:
             logger.warning("Could not delete saved plot", exc_info=True)
             return no_update, no_update, html.Span(
-                "Delete failed", className="text-danger"
+                "Delete failed", className="ui-feedback-danger"
             )
         return (
             (version or 0) + 1,
             None,
-            html.Span(f"Deleted {stem}", className="text-muted"),
+            html.Span(f"Deleted {stem}"),
         )
 
     # --- Load a saved plot config ----------------------------------------
@@ -346,12 +346,12 @@ def register_callbacks(app: dash.Dash) -> None:
             cfg = load_plot_config(stem)
         except FileNotFoundError:
             return [no_update] * 26 + [
-                html.Span("Saved plot not found", className="text-danger"),
+                html.Span("Saved plot not found", className="ui-feedback-danger"),
             ]
         except (ValueError, OSError):
             logger.warning("Could not load saved plot", exc_info=True)
             return [no_update] * 26 + [
-                html.Span("Load failed (corrupt file?)", className="text-danger"),
+                html.Span("Load failed (corrupt file?)", className="ui-feedback-danger"),
             ]
 
         # 1. Restore staged_items in state + bump staging-version.
@@ -420,6 +420,6 @@ def register_callbacks(app: dash.Dash) -> None:
             lim_str(style.get("y2_max")),
             html.Span(
                 f"Loaded {cfg.get('name', stem)} · {len(staged)} cells",
-                className="text-success",
+                className="ui-feedback-success",
             ),
         )

@@ -182,7 +182,7 @@ def _connect_modal() -> dbc.Modal:
             dbc.ModalBody(
                 [
                     html.Div(id="conn-modal-autoconn-msg", className="mb-2"),
-                    dbc.Label("Datalab URL", html_for="conn-url", className="small mb-1"),
+                    dbc.Label("Datalab URL", html_for="conn-url", className="ui-field-label"),
                     dbc.Input(
                         id="conn-url",
                         type="text",
@@ -191,7 +191,7 @@ def _connect_modal() -> dbc.Modal:
                         size="sm",
                         className="mb-2",
                     ),
-                    dbc.Label("API key", html_for="conn-key", className="small mb-1"),
+                    dbc.Label("API key", html_for="conn-key", className="ui-field-label"),
                     dbc.Input(
                         id="conn-key",
                         type="password",
@@ -200,7 +200,7 @@ def _connect_modal() -> dbc.Modal:
                         size="sm",
                         className="mb-2",
                     ),
-                    html.Div(id="conn-error", className="small text-danger"),
+                    html.Div(id="conn-error", className="ui-feedback ui-feedback-danger"),
                 ]
             ),
             dbc.ModalFooter(
@@ -288,7 +288,6 @@ def register_callbacks(app: dash.Dash) -> None:
                     state["auto_connect_failed"],
                 ),
                 color="warning",
-                className="small py-2 px-2 mb-2",
             )
         if client is None:
             return (

@@ -88,21 +88,22 @@ def layout() -> html.Div:
                 className="preset-scroller",
             ),
             dcc.Store(id="opt-preset", data=_initial("ui_preset")),
-            html.Div(id="opt-summary-extras", className="mt-1"),
+            html.Div(id="opt-summary-extras", className="mb-2"),
             # Plot options toggle — same chevron-link-button pattern as the
             # ▾ Search results / ▾ Plotting headers.
             dbc.Button(
-                ["▸ ", html.Strong("Plot options")],
+                ["▸ ", "Plot options"],
                 id="opt-collapse-btn",
                 color="link",
                 size="sm",
-                className="p-0 text-decoration-none text-secondary mt-2",
+                className="p-0 text-decoration-none ui-section-title mb-2",
                 title="Show / hide all plot options",
             ),
             dbc.Collapse(
                 _plot_options_body(),
                 id="opt-collapse",
                 is_open=False,
+                className="mb-2",
             ),
             dbc.Row(
                 [
@@ -128,7 +129,7 @@ def layout() -> html.Div:
                         className="d-flex align-items-center",
                     ),
                 ],
-                className="g-2 mt-2 align-items-center",
+                className="g-2 align-items-center",
             ),
             dcc.Store(id="plot-options", data={}),
         ],
@@ -136,14 +137,17 @@ def layout() -> html.Div:
 
 
 def _plot_options_body() -> html.Div:
+    # Empty-label placeholder used to vertically align a label-less Switch
+    # with the label-having inputs in the same row.
+    _label_spacer = dbc.Label(" ", className="ui-field-label")
     return html.Div(
         [
-            html.Div("Axes & title", className="small text-muted mb-1"),
+            html.Div("Axes & title", className="ui-subsection-label"),
             dbc.Row(
                 [
                     dbc.Col(
                         [
-                            dbc.Label("Mode", className="small mb-1"),
+                            dbc.Label("Mode", className="ui-field-label"),
                             dbc.Select(
                                 id="opt-mode",
                                 options=[
@@ -158,7 +162,7 @@ def _plot_options_body() -> html.Div:
                     ),
                     dbc.Col(
                         [
-                            dbc.Label("X", className="small mb-1"),
+                            dbc.Label("X", className="ui-field-label"),
                             dbc.Select(
                                 id="opt-x-axis",
                                 options=[{"label": v, "value": v} for v in AXIS_OPTIONS],
@@ -170,7 +174,7 @@ def _plot_options_body() -> html.Div:
                     ),
                     dbc.Col(
                         [
-                            dbc.Label("Y (left)", className="small mb-1"),
+                            dbc.Label("Y (left)", className="ui-field-label"),
                             dbc.Select(
                                 id="opt-y-axis",
                                 options=[{"label": v, "value": v} for v in AXIS_OPTIONS],
@@ -182,7 +186,7 @@ def _plot_options_body() -> html.Div:
                     ),
                     dbc.Col(
                         [
-                            dbc.Label("Y₂ (right)", className="small mb-1"),
+                            dbc.Label("Y₂ (right)", className="ui-field-label"),
                             dbc.Select(
                                 id="opt-y2-axis",
                                 options=[{"label": v, "value": v} for v in Y2_OPTIONS],
@@ -194,7 +198,7 @@ def _plot_options_body() -> html.Div:
                     ),
                     dbc.Col(
                         [
-                            dbc.Label("Title (optional)", className="small mb-1"),
+                            dbc.Label("Title (optional)", className="ui-field-label"),
                             dbc.Input(
                                 id="opt-title", type="text",
                                 value=_initial("ui_title"), size="sm",
@@ -203,21 +207,20 @@ def _plot_options_body() -> html.Div:
                         width=4,
                     ),
                 ],
-                className="g-2",
+                className="g-2 mb-2",
             ),
             dbc.Switch(
                 id="opt-color-by-status",
                 label="Colour traces by cycler step (CC_Chg / CV_Chg / Rest …)",
                 value=bool(_initial("ui_color_by_status")),
-                className="mt-2",
+                className="mb-3",
             ),
-            html.Hr(),
-            html.Div("Layout & styling", className="small text-muted mb-1"),
+            html.Div("Layout & styling", className="ui-subsection-label"),
             dbc.Row(
                 [
                     dbc.Col(
                         [
-                            dbc.Label("Plot width (%)", className="small mb-1"),
+                            dbc.Label("Plot width (%)", className="ui-field-label"),
                             _slider("opt-plot-width", 40, 100, 5,
                                     int(_initial("ui_plot_width"))),
                         ],
@@ -225,7 +228,7 @@ def _plot_options_body() -> html.Div:
                     ),
                     dbc.Col(
                         [
-                            dbc.Label("Plot height (px)", className="small mb-1"),
+                            dbc.Label("Plot height (px)", className="ui-field-label"),
                             _slider("opt-plot-height", 320, 900, 20,
                                     int(_initial("ui_plot_height"))),
                         ],
@@ -233,20 +236,20 @@ def _plot_options_body() -> html.Div:
                     ),
                     dbc.Col(
                         [
-                            dbc.Label("Trace width", className="small mb-1"),
+                            dbc.Label("Trace width", className="ui-field-label"),
                             _slider("opt-width-scale", 0.5, 5.0, 0.25,
                                     float(_initial("ui_width_scale"))),
                         ],
                         width=4,
                     ),
                 ],
-                className="g-2",
+                className="g-2 mb-2",
             ),
             dbc.Row(
                 [
                     dbc.Col(
                         [
-                            dbc.Label("Legend", className="small mb-1"),
+                            dbc.Label("Legend", className="ui-field-label"),
                             dbc.Select(
                                 id="opt-legend-mode",
                                 options=_legend_options(),
@@ -258,23 +261,25 @@ def _plot_options_body() -> html.Div:
                     ),
                     dbc.Col(
                         [
-                            dbc.Label("Text size", className="small mb-1"),
+                            dbc.Label("Text size", className="ui-field-label"),
                             _slider("opt-font-size", 8, 28, 1,
                                     int(_initial("ui_font_size"))),
                         ],
                         width=4,
                     ),
                     dbc.Col(
-                        dbc.Switch(
-                            id="opt-colorbar",
-                            label="Cycle colorbar (V-vs-Q only)",
-                            value=bool(_initial("ui_colorbar")),
-                            className="mt-4",
-                        ),
+                        [
+                            _label_spacer,
+                            dbc.Switch(
+                                id="opt-colorbar",
+                                label="Cycle colorbar (V-vs-Q only)",
+                                value=bool(_initial("ui_colorbar")),
+                            ),
+                        ],
                         width=4,
                     ),
                 ],
-                className="g-2 mt-1",
+                className="g-2 mb-2",
             ),
             dbc.Row(
                 [
@@ -300,13 +305,13 @@ def _plot_options_body() -> html.Div:
                         width=4,
                     ),
                 ],
-                className="g-2 mt-1",
+                className="g-2 mb-2",
             ),
             dbc.Row(
                 [
                     dbc.Col(
                         [
-                            dbc.Label("Trace style", className="small mb-1"),
+                            dbc.Label("Trace style", className="ui-field-label"),
                             dbc.Select(
                                 id="opt-marker-mode",
                                 options=[
@@ -321,50 +326,49 @@ def _plot_options_body() -> html.Div:
                     ),
                     dbc.Col(
                         [
-                            dbc.Label("Marker size", className="small mb-1"),
+                            dbc.Label("Marker size", className="ui-field-label"),
                             _slider("opt-marker-size", 2, 16, 1,
                                     int(_initial("ui_marker_size"))),
                         ],
                         width=4,
                     ),
                 ],
-                className="g-2 mt-1",
+                className="g-2 mb-3",
             ),
-            html.Hr(),
+            html.Div("Axis limits", className="ui-subsection-label"),
             html.Div(
-                "Axis limits — leave blank for auto:",
-                className="small text-muted mb-1",
+                "Leave blank for auto-range.",
+                className="ui-caption mb-2",
             ),
             dbc.Row(
                 [
                     dbc.Col([
-                        dbc.Label("x min", className="small mb-1"),
+                        dbc.Label("x min", className="ui-field-label"),
                         dbc.Input(id="opt-xmin", type="text", value="", size="sm"),
                     ], width=2),
                     dbc.Col([
-                        dbc.Label("x max", className="small mb-1"),
+                        dbc.Label("x max", className="ui-field-label"),
                         dbc.Input(id="opt-xmax", type="text", value="", size="sm"),
                     ], width=2),
                     dbc.Col([
-                        dbc.Label("y min", className="small mb-1"),
+                        dbc.Label("y min", className="ui-field-label"),
                         dbc.Input(id="opt-ymin", type="text", value="", size="sm"),
                     ], width=2),
                     dbc.Col([
-                        dbc.Label("y max", className="small mb-1"),
+                        dbc.Label("y max", className="ui-field-label"),
                         dbc.Input(id="opt-ymax", type="text", value="", size="sm"),
                     ], width=2),
                     dbc.Col([
-                        dbc.Label("y₂ min", className="small mb-1"),
+                        dbc.Label("y₂ min", className="ui-field-label"),
                         dbc.Input(id="opt-y2min", type="text", value="", size="sm"),
                     ], width=2),
                     dbc.Col([
-                        dbc.Label("y₂ max", className="small mb-1"),
+                        dbc.Label("y₂ max", className="ui-field-label"),
                         dbc.Input(id="opt-y2max", type="text", value="", size="sm"),
                     ], width=2),
                 ],
-                className="g-2",
+                className="g-2 mb-3",
             ),
-            html.Hr(),
             dbc.Button(
                 "Reset all options to defaults",
                 id="opt-reset-btn",
@@ -390,7 +394,7 @@ def register_callbacks(app: dash.Dash) -> None:
             return no_update, no_update
         new_open = not is_open
         glyph = "▾ " if new_open else "▸ "
-        return new_open, [glyph, html.Strong("Plot options")]
+        return new_open, [glyph, "Plot options"]
 
     # --- Preset button click → update Store + toggle active props -------
     @app.callback(

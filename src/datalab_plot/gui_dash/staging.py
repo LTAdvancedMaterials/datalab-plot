@@ -124,7 +124,7 @@ def _apply_field(label: str, input_id: str, btn_id: str) -> dbc.Row:
     return dbc.Row(
         [
             dbc.Col(
-                dbc.Label(label, html_for=input_id),
+                dbc.Label(label, html_for=input_id, className="ui-field-label mb-0"),
                 width="auto",
                 className="d-flex align-items-center pe-1",
             ),
@@ -164,11 +164,11 @@ def layout() -> html.Div:
                 [
                     dbc.Col(
                         dbc.Button(
-                            ["▸ ", html.Strong("Plotting")],
+                            ["▸ ", "Plotting"],
                             id="staged-collapse-btn",
                             color="link",
                             size="sm",
-                            className="p-0 text-decoration-none text-secondary",
+                            className="p-0 text-decoration-none ui-section-title",
                             title="Show / hide the staged-items table",
                         ),
                         width="auto",
@@ -179,13 +179,13 @@ def layout() -> html.Div:
                             id="staged-expand-btn",
                             color="link",
                             size="sm",
-                            className="p-0 text-decoration-none text-secondary",
+                            className="p-0 text-decoration-none ui-caption",
                             title="Toggle between default and tall table",
                         ),
                         width="auto",
                     ),
                     dbc.Col(
-                        html.Div(id="staged-counts", className="small text-muted"),
+                        html.Div(id="staged-counts", className="ui-meta"),
                         width="auto",
                     ),
                     dbc.Col(
@@ -209,7 +209,7 @@ def layout() -> html.Div:
                         dbc.Col(
                             html.Span(
                                 id="staged-apply-prompt",
-                                className="small fw-bold text-muted",
+                                className="ui-subsection-label mb-0",
                             ),
                             width="auto",
                             className="d-flex align-items-center pe-2",
@@ -410,7 +410,7 @@ def register_callbacks(app: dash.Dash) -> None:
             return no_update, no_update
         new_open = not is_open
         glyph = "▾ " if new_open else "▸ "
-        return new_open, [glyph, html.Strong("Plotting")]
+        return new_open, [glyph, "Plotting"]
 
     # --- Expand toggle (default 400px ↔ 80vh) ---------------------------
     @app.callback(

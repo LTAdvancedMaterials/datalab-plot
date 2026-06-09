@@ -176,9 +176,8 @@ def layout() -> html.Div:
             html.Div(
                 id="plot-warnings",
                 style={"minHeight": "40px"},
-                className="mt-2",
             ),
-            html.Div(id="plot-cache-caption", className="small text-muted mt-1"),
+            html.Div(id="plot-cache-caption", className="ui-meta"),
         ]
     )
 
@@ -285,20 +284,17 @@ def register_callbacks(app: dash.Dash) -> None:
                 "No cycling files for: " + ", ".join(result.skipped_labels)
                 + " — omitted.",
                 color="warning",
-                className="small py-1 px-2 mb-1",
             ))
         if result.skipped_no_mass:
             warnings.append(dbc.Alert(
                 "Skipped from specific capacity plot — no cathode mass recorded: "
                 + ", ".join(result.skipped_no_mass),
                 color="warning",
-                className="small py-1 px-2 mb-1",
             ))
         if result.error_message:
             warnings.append(dbc.Alert(
                 f"Plot failed: {result.error_message}",
                 color="danger",
-                className="small py-1 px-2 mb-1",
             ))
 
         if result.fig is None:

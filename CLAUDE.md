@@ -218,11 +218,15 @@ Brand palette:
 
 Button hierarchy (single source of truth):
 - **Solid primary** — modal Connect submit, navbar Connect (disconnected).
-- **Outline primary** — Search, Refresh, Apply (×3 in staging), Save.
+- **Outline primary** — Search, Refresh, Apply (×3 in staging), Save,
+  Add to plot.
 - **Outline secondary** — All / None / Invert, Cancel, Dismiss, Export
   CSV, Load, Delete, Remove selected.
-- **Link with text-secondary** — collapse/expand chevrons (`▾ Items`,
-  `▾ Plotting`, `▸ Plot options`, `⤢ Expand` / `⤡ Compact`).
+- **Link** — collapse/expand chevrons. Apply `ui-section-title` to the
+  primary collapse toggle (e.g. `▾ Search results`, `▾ Plotting`,
+  `▸ Plot options`), and `ui-caption` to secondary accessory links
+  (e.g. `⤢ Expand` / `⤡ Compact`). Never `text-secondary` directly —
+  use the semantic class.
 
 All `dbc.Button` and `dbc.Input` use `size="sm"`. Don't introduce default-
 size buttons or default-size inputs — they break the visual rhythm.
@@ -235,6 +239,90 @@ Containers:
   `.expanded`).
 - `.apply-toolbar` — brand-grey bg, same border / radius as the grid
   wrapper.
+
+### Typographic style guide
+
+Every text element in the Dash GUI uses one of these semantic classes
+from `_GLOBAL_CSS` in `gui_dash/app.py`. **Do not introduce ad-hoc
+`className="small"`, `fw-bold`, or inline `font-size`** — apply the right
+class. New agents who need a text style they think isn't covered should
+extend the class table here, not invent a one-off.
+
+| Use | Class | Example |
+|---|---|---|
+| Section title (collapse-toggle headers) | `ui-section-title` | `▾ Search results`, `▸ Plot options` |
+| Subsection label (inside Options accordion + apply-toolbar prompt) | `ui-subsection-label` | `AXES & TITLE`, `APPLY TO 3 SELECTED:` |
+| Field label (above / beside an input) | `ui-field-label` | `Mode`, `x min`, `API key` |
+| Status / counts | `ui-meta` (+ `<strong>` for emphasis) | `3 selected of 30`, `5 staged` |
+| Helper caption / hint | `ui-caption` | `PNG: hover the plot…`, `Leave blank for auto-range.` |
+| Feedback success | `ui-feedback ui-feedback-success` | `Saved to my-plot.json` |
+| Feedback error | `ui-feedback ui-feedback-danger` | `Save failed` |
+| Brand wordmark (navbar only) | `navbar-brand` (Bootstrap auto-applies) | `datalab-plot` |
+
+#### Rules
+
+- **Type scale — 4 sizes only**: 17px (navbar brand) / 16px (body) / 13px
+  (`--text-sm`) / 11px (`--text-xs`). Never set `font-size` inline.
+- **Weight — 2 weights only**: 400 regular, 600 semibold. **Never `fw-bold`
+  (700)**. `<strong>` is globally rebalanced to 600 in `_GLOBAL_CSS`.
+- **Color**: never combine `text-muted` with semibold weight outside of
+  `.ui-subsection-label` (the one legitimate exception, justified by its
+  uppercase + letter-spacing that makes it read as a section delimiter,
+  not as de-emphasised body).
+- **Spacing**: gutters always `g-2`; "within a section" rows `mb-2`;
+  "between subsection groups" `mb-3`. **Never use `mt-*`** — push space
+  downward via `mb-*` on the preceding element. This way, deleting or
+  reordering a row never breaks vertical rhythm.
+- **Alerts**: just `dbc.Alert(text, color="warning" | "danger" | "info")`.
+  The `.alert` rule in `_GLOBAL_CSS` standardises padding + size. Never
+  add `className="py-1 px-2 mb-1"` — that's a leak from a past life.
+
+#### Layout patterns to follow
+
+**Section header row** (the chevron collapse-toggle used by Search Results
+/ Plotting / Plot options):
+
+```python
+dbc.Button(["▾ ", "Search results"],     # plain string, not html.Strong
+           color="link", size="sm",
+           className="p-0 text-decoration-none ui-section-title")
+```
+
+**Field-label + input** (vertical, inside Options accordion):
+
+```python
+dbc.Col([
+    dbc.Label("Mode", className="ui-field-label"),
+    dbc.Select(id="opt-mode", size="sm", ...),
+], width=2)
+```
+
+**Status counts** (everywhere):
+
+```python
+html.Span([html.Strong(f"{n}"), " staged"], className="ui-meta")
+# renders: 5 staged   — semibold number, muted text
+```
+
+#### Common pitfalls (don't do these)
+
+- ❌ `className="small text-muted"` for a section header — looks like a
+  caption. Use `ui-subsection-label`.
+- ❌ `className="small fw-bold text-muted"` — bold + muted is visually
+  contradictory. Use either `ui-section-title` (dark, semibold) or
+  `ui-subsection-label` (muted, semibold, uppercase).
+- ❌ `html.Small(...)` — duplicates the size system. Use a `<span>` with
+  `ui-caption` instead.
+- ❌ Inline `style={"fontSize": "0.8125rem"}` — bypasses the type scale.
+- ❌ Mixing `g-1` with `g-2` in adjacent rows — pick `g-2`, stay with it.
+- ❌ Per-alert padding (`py-1 px-2 mb-1`) — `.alert` is already standardised.
+- ❌ `className="fw-bold"` anywhere — semibold (600) via `<strong>` or a
+  semantic class only. Never 700.
+- ❌ `className="mt-*"` for anything — always push space via `mb-*` on the
+  preceding element. The one tolerated exception is a label-spacer
+  `dbc.Label(" ", className="ui-field-label")` placeholder used to
+  vertically align a label-less Switch with its labelled neighbours in a
+  flex row (see `options.py:_plot_options_body`'s colorbar column).
 
 ## Visual consistency between plot types
 

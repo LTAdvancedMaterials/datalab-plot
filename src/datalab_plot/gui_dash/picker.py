@@ -115,11 +115,11 @@ def layout() -> html.Div:
                 [
                     dbc.Col(
                         dbc.Button(
-                            ["▾ ", html.Strong("Search results")],
+                            ["▾ ", "Search results"],
                             id="picker-grid-collapse-btn",
                             color="link",
                             size="sm",
-                            className="p-0 text-decoration-none text-secondary",
+                            className="p-0 text-decoration-none ui-section-title",
                             title="Show / hide the search-results table",
                         ),
                         width="auto",
@@ -130,13 +130,13 @@ def layout() -> html.Div:
                             id="picker-grid-expand-btn",
                             color="link",
                             size="sm",
-                            className="p-0 text-decoration-none text-secondary",
+                            className="p-0 text-decoration-none ui-caption",
                             title="Toggle between default and tall table",
                         ),
                         width="auto",
                     ),
                     dbc.Col(
-                        html.Div(id="picker-counts", className="small text-muted"),
+                        html.Div(id="picker-counts", className="ui-meta"),
                         width="auto",
                     ),
                     dbc.Col(
@@ -300,7 +300,7 @@ def register_callbacks(app: dash.Dash) -> None:
             return no_update, no_update
         new_open = not is_open
         glyph = "▾ " if new_open else "▸ "
-        return new_open, [glyph, html.Strong("Search results")]
+        return new_open, [glyph, "Search results"]
 
     # --- Expand toggle (default 400px ↔ 80vh) ---------------------------
     @app.callback(
@@ -344,7 +344,6 @@ def register_callbacks(app: dash.Dash) -> None:
                 ),
             ],
             color="danger",
-            className="py-2 px-2 small",
         )
 
     @app.callback(

@@ -72,8 +72,8 @@ def layout() -> html.Div:
                 size="sm",
                 className="mb-2",
             ),
-            html.Div(id="search-error", className="small text-danger mb-1"),
-            html.Div(id="search-summary", className="small text-muted"),
+            html.Div(id="search-error", className="ui-feedback ui-feedback-danger mb-2"),
+            html.Div(id="search-summary", className="ui-meta"),
         ]
     )
 
