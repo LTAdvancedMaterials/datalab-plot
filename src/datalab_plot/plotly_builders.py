@@ -202,6 +202,30 @@ def _layout(
 # (_build_plotly) can serve both Plot-click and live-update reruns.
 # ---------------------------------------------------------------------------
 
+def _cycle_dtick(max_cycle: int) -> int:
+    """Pick a tick spacing for the cycle-number x-axis that keeps every
+    tick at an integer position (no 0.5 / 1.5 / 2.5 visible) while staying
+    in a readable 6–15 ticks across the visible range.
+
+    Used by ``_plotly_summary`` (the only builder with cycle number on x).
+    Combined with ``tickmode="linear"`` + ``tick0=0`` it guarantees
+    integer-only ticks at every zoom level.
+    """
+    if max_cycle <= 15:
+        return 1
+    if max_cycle <= 30:
+        return 2
+    if max_cycle <= 80:
+        return 5
+    if max_cycle <= 200:
+        return 10
+    if max_cycle <= 500:
+        return 25
+    if max_cycle <= 1000:
+        return 50
+    return 100
+
+
 def _plotly_summary(
     items, raw, colors, height, width_scale: float = 1.0,
     style: PlotStyle | None = None,
@@ -250,17 +274,29 @@ def _plotly_summary(
         ))
 
     if all_cycles:
-        x_range = [0.5, max(all_cycles) + 0.5]
+        n_max = int(max(all_cycles))
+        x_range = [0.5, n_max + 0.5]
+        dtick = _cycle_dtick(n_max)
     else:
         x_range = None
+        dtick = 1
 
     for fig, y_title in (
         (fig_dch, dch_label),
         (fig_chg, chg_label),
         (fig_ce, "Coulombic efficiency (%)"),
     ):
-        fig.update_xaxes(title_text="Cycle number", range=x_range,
-                         tickformat="d")  # integers only — never show 1.5 cycles
+        # tickmode="linear" + tick0=0 + integer dtick guarantees ticks at
+        # integer positions only (no 0.5 / 1.5 / 2.5). tickformat="d"
+        # additionally strips any decimal in the label rendering.
+        fig.update_xaxes(
+            title_text="Cycle number",
+            range=x_range,
+            tickmode="linear",
+            tick0=0,
+            dtick=dtick,
+            tickformat="d",
+        )
         fig.update_yaxes(title_text=y_title)
         _layout(fig, height, style=style, n_legend_items=len(items))
 
