@@ -120,18 +120,67 @@ gui_dash/
 
 ### Layout pattern
 
-Top-down stack of sections, each wrapped in `html.Div(className="ui-section")`
-(hairline divider via CSS):
+**Two columns** in a CSS-Grid shell (`.ui-two-col` in `_GLOBAL_CSS`) with a
+**vertical 6-px draggable divider** between them. Wide viewports (≥ 992
+px) get the two-column split; narrow viewports collapse to a single
+column and the divider is hidden. The navbar exposes a **1 / 2** button
+group that forces single-column even on a wide viewport (via the
+`.force-single-col` class on `#main-content`).
+
+Default split: **60 % left / 40 % right**, controlled by the CSS
+variable `--left-col-width` on `#main-content`. A clientside JS callback
+in `_make_app` wires both dividers' `mousedown` → `mousemove` →
+`mouseup` flow, clamps the new percentage to `[25 %, 85 %]` (vertical) or
+`[200 px, 92 vh]` (horizontal plot divider), and on release dispatches a
+`window.resize` event so Plotly reflows.
 
 ```
-[Navbar: brand · cache-stats dropdown / Connect]
-[Search]            ─ ui-section
-[Search results]    ─ ui-section (AG Grid, ephemeral selection + Add to plot)
-[Plotting]          ─ ui-section (AG Grid, durable, editable; default collapsed)
-[Plot options]      ─ ui-section (preset + collapsible details + Refresh + Auto)
-[Plot]              ─ ui-section (stable dcc.Graph; tabs for Cycle Life)
-[Export]            ─ ui-section (PNG hint + CSV + Save/Load JSON)
+[Navbar: brand                           [▯|▯▯] [☀|☾] [✓ServerName ▾] ]
+┌─ #main-content.ui-two-col (CSS Grid: --left-col-width | 6px | 1fr) ──┐
+│ #left-col.ui-col-left (60%)  │ #col-divider │ #right-col.ui-col-right│
+│ — data + controls + export   │ align-self:  │ — preset + plot only   │
+│ (scrolls naturally)          │ stretch      │ (position: sticky;     │
+│                              │              │  pinned to viewport)   │
+│ [Search]                     │              │ [Preset selector]      │
+│ [Search results]             │              │   V vs t | V vs Q | …  │
+│  – AG Grid                   │              │ [Sub-view selector]    │
+│  – ✓ column + row tint       │              │   Discharge | Charge   │
+│    for already-staged items  │              │   | CE % | Table       │
+│  – + Add to plot             │              │   (Cycle Life only;    │
+│ [Plotting]                   │              │    hidden otherwise)   │
+│   apply-toolbar + grid all   │              │ [Plot]                 │
+│   inside one Collapse        │              │   onboarding-hint      │
+│ [Plot options]               │              │   #plot-resizer (with  │
+│   collapsible (incl. Plot    │              │     --plot-height CSS  │
+│   size X/Y px inputs) +      │              │     var)               │
+│   summary-extras +           │              │     dcc.Graph          │
+│   cache caption +            │              │       .ui-plot-graph   │
+│   Re-fetch / Auto-refresh    │              │     #plot-h-divider    │
+│ [Export]                     │              │       (ns-resize drag) │
+│   PNG hint · CSV ·           │              │   warnings             │
+│   Save / Load JSON (load     │              │                        │
+│   fires on file selection)   │              │                        │
+└──────────────────────────────────────────────────────────────────────┘
 ```
+
+**Plot height is CSS-driven via a CSS variable on `.ui-plot-resizer`.**
+The variable `--plot-height` defaults to `calc(100vh - 11rem)` on wide
+viewports and `60vh` on narrow ones (or in `.force-single-col` mode).
+The horizontal-divider clientside JS overrides it on drag via
+`style.setProperty('--plot-height', ...)`. The `dcc.Graph` instances
+read it through the `.ui-plot-graph` rule `height: var(--plot-height)
+!important`. Plot **width** comes from the right column's width.
+Plotly's `responsive: True` (in `_PLOTLY_CONFIG`) plus the dispatched
+resize event makes the figure recompute when either divider moves.
+
+### Navbar toggles
+
+| Control | Effect |
+|---|---|
+| `[▯] [▯▯]` button group | Toggles `.force-single-col` on `#main-content`. `[▯▯]` (two-column) is active by default. Stays force-single until `[▯▯]` is clicked or the page is reloaded. The single white-rectangle / double white-rectangle glyphs (U+25AF) mirror the layout visually. |
+| `[☀] [☾]` button group | Toggles `data-bs-theme="dark"` on `<html>` AND writes `dcc.Store(id="theme")`. Glyphs are flat monochrome (U+2600 BLACK SUN WITH RAYS, U+263E LAST QUARTER MOON), same style as the column toggle. Flips: page chrome (`[data-bs-theme="dark"]` CSS overrides), both AG Grids' className (`ag-theme-alpine` ↔ `ag-theme-alpine-dark`), the Plotly figure template (`plotly_white` ↔ `plotly_dark`), the staged-row tint (`--ag-row-staged-bg`) and editable-cell tint (`--ag-editable-cell-bg`). The plot re-renders on theme change even when Auto-refresh is off — `_render_plot` has `Input("theme", "data")` and treats it as a render trigger (without `force_refresh`). |
+| `✓ ServerName ▾` dropdown (when connected) | Cache stats header + Forget cached data / Forget saved key / Sign out. |
+| `Connect` button (when disconnected) | Opens the credentials modal. |
 
 ### State management
 
@@ -193,6 +242,76 @@ Two layers:
 - **AG Grid uses `getRowId="params.data.item_id"`** so updates preserve
   selection by id, not row index. Required for "Add to plot" /
   edit-cell-then-redraw flows to keep selection stable.
+
+- **Plot height is CSS-driven via the `--plot-height` variable** on
+  `.ui-plot-resizer` (the wrapper Div around the dcc.Graph) — figure
+  layout's `height` is intentionally `None`. Don't pass a numeric
+  `height` to the figure builders (`_layout`, `_plotly_*`,
+  `build_figure_for_payload`) or set `figure.layout.height` from the
+  Dash side. The `.ui-plot-graph` rule (`height: var(--plot-height)
+  !important`) is the single source. The horizontal-divider drag updates
+  the variable; defaults are in the media-query / `.force-single-col`
+  rules. Same for width — the right column's width wins; don't set
+  `figure.layout.width` or wrap the Graph in a padded Div.
+
+- **Grid divider needs `align-self: stretch`.** The `.ui-two-col`
+  container has `align-items: start`, which would collapse an empty
+  divider div to 0 height. The `.ui-col-divider` rule overrides with
+  `align-self: stretch` so the divider fills the row height. If you
+  remove the override the divider disappears.
+
+- **The right column is `position: sticky`.** Only the left column
+  scrolls with the document; the right column (plot + h-divider + preset)
+  stays pinned to the viewport top via `position: sticky; top: 0.5rem;
+  align-self: start; max-height: calc(100vh - 1rem); overflow-y: auto`.
+  The `align-self: start` is required for `position: sticky` to take
+  effect inside a CSS Grid child (it opts out of the grid's `align-items:
+  start` *and* prevents stretching to match the left column's height).
+  The sticky behaviour is overridden to `static` by both `.force-single-
+  col` and the `@media (max-width: 991.98px)` rule, so single-column
+  mode and narrow viewports get natural document flow.
+
+- **Dividers + navbar toggle rely on clientside callbacks bound once.**
+  The `window.__dividerBound` flag in `app.py:_make_app`'s clientside JS
+  guards against rebinding on every callback fire. The col-mode toggle
+  has its own clientside callback. The same divider-bind callback also
+  populates `#opt-plot-w-px` and `#opt-plot-h-px` on first paint and on
+  every drag (mousemove for h-divider, mouseup for both). If you replace
+  any of them or add another mousedown handler on `#col-divider` /
+  `#plot-h-divider`, audit the bound flag and the callback chain.
+
+- **Plot size X / Y inputs are bidirectional.** In Plot options, the
+  `opt-plot-w-px` and `opt-plot-h-px` `dbc.Input(type="number")` fields
+  reflect the current plot size (pushed by the divider JS) AND drive it
+  on Enter (via two clientside callbacks that write the appropriate CSS
+  variable: width → `--left-col-width` on `#main-content`, height →
+  `--plot-height` on `#plot-resizer`). They fire on `n_submit` (Enter)
+  rather than `value` to avoid relayout on every keystroke. Output is the
+  field's own `n_blur` — a throwaway since Dash needs *some* Output but
+  this prop never reads back to the callback.
+
+- **Plotly template is parameter-driven.** Pass `theme="dark"` (→
+  `plotly_dark`) into `build_figure_for_payload`; anything else maps
+  to `plotly_white`. The Dash GUI threads this via the
+  `dcc.Store(id="theme")` → `options._aggregate` (echoing the value
+  into the `plot-options` Store) → `plotting_panel._render_plot`
+  pipeline. Don't hardcode the template string inside any
+  `_plotly_*` builder — `_layout()` accepts it as a kwarg.
+  `_render_plot` also has `Input("theme", "data")` directly and
+  treats it as a render trigger even when Auto-refresh is off, so
+  toggling the theme always flips the figure immediately — without
+  re-fetching data (`force_refresh` stays bound to `is_refresh`
+  only). `_empty_figure(message, theme=)` accepts the same hint for
+  placeholder states.
+
+- **AG Grid styling uses inline CSS variables.** Two tints are
+  defined per theme on `:root` and `[data-bs-theme="dark"]`:
+  `--ag-row-staged-bg` (picker.py `getRowStyle` — already-staged
+  rows) and `--ag-editable-cell-bg` (staging.py `_COLUMN_DEFS`
+  `cellStyle` — the editable label/group/color cells). Changing
+  either requires editing CSS, not Python. Inline CSS-variable
+  references resolve at paint time, so theme switches re-tint
+  without a grid re-render.
 
 - **Conditional widgets that get re-mounted on Input change can race.**
   `options._render_extras` swaps `opt-specific-capacity` and `opt-cycle`
@@ -449,6 +568,16 @@ GUI edits:
   flow into the plot. If you want bulk-apply support, add a new field
   to `_apply_field` and wire it in `_apply_to_selection`.
 
+- **Add a Cycle Life sub-view**: append a `(short_label, title)` tuple
+  to `_SUMMARY_VIEWS` in [options.py](src/datalab_plot/gui_dash/options.py),
+  then make sure `_plotly_summary` in
+  [plotly_builders.py](src/datalab_plot/plotly_builders.py) emits a
+  matching `(title, fig)` pair. The render-side dispatch in
+  `plotting_panel._render_plot` and `_render_summary_subview` is a
+  dict lookup by title, so the strings must match exactly. The
+  reserved title `"Capacity table"` routes to the table layout
+  instead of a Plotly figure.
+
 - **Touch session-state keys**: any key in the `get_state()` dict is
   load-bearing across callbacks. Renaming requires auditing every
   reference. Prefer adding new keys to renaming.
@@ -462,4 +591,8 @@ GUI edits:
   `datalab_url` for reference but loading against a different instance
   will silently fail to find items.
 - A "share via URL" feature.
-- Light/dark theme toggle. Bootstrap default light is the only theme.
+- Persisting theme preference across page reloads. The 🌙 toggle is
+  session-local — refresh resets to light.
+- Adapting trace palettes (STATUS_COLOR_MAP, tab10) to the dark
+  template. The stock mid-saturation colours read on both
+  backgrounds; revisit only if legibility complaints arise.

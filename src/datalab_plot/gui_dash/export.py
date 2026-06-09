@@ -129,17 +129,6 @@ def layout() -> html.Div:
                     ),
                     dbc.Col(
                         dbc.Button(
-                            "Load",
-                            id="export-load-btn",
-                            color="secondary",
-                            outline=True,
-                            size="sm",
-                            disabled=True,
-                        ),
-                        width="auto",
-                    ),
-                    dbc.Col(
-                        dbc.Button(
                             "✕",
                             id="export-delete-btn",
                             color="secondary",
@@ -212,15 +201,13 @@ def register_callbacks(app: dash.Dash) -> None:
     def _save_btn_disabled(name):  # type: ignore[no-untyped-def]
         return not (name and name.strip())
 
-    # --- Load + Delete buttons disabled when no selection ----------------
+    # --- Delete button disabled when no selection ------------------------
     @app.callback(
-        Output("export-load-btn", "disabled"),
         Output("export-delete-btn", "disabled"),
         Input("export-load-select", "value"),
     )
-    def _load_btn_disabled(stem):  # type: ignore[no-untyped-def]
-        disabled = not stem
-        return disabled, disabled
+    def _delete_btn_disabled(stem):  # type: ignore[no-untyped-def]
+        return not stem
 
     # --- Save current plot config ----------------------------------------
     @app.callback(
@@ -314,8 +301,6 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("opt-y2-axis", "value", allow_duplicate=True),
         Output("opt-title", "value", allow_duplicate=True),
         Output("opt-color-by-status", "value", allow_duplicate=True),
-        Output("opt-plot-width", "value", allow_duplicate=True),
-        Output("opt-plot-height", "value", allow_duplicate=True),
         Output("opt-width-scale", "value", allow_duplicate=True),
         Output("opt-legend-mode", "value", allow_duplicate=True),
         Output("opt-font-size", "value", allow_duplicate=True),
@@ -332,25 +317,24 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("opt-y2min", "value", allow_duplicate=True),
         Output("opt-y2max", "value", allow_duplicate=True),
         Output("export-load-feedback", "children", allow_duplicate=True),
-        Input("export-load-btn", "n_clicks"),
-        State("export-load-select", "value"),
+        Input("export-load-select", "value"),
         State("staging-version", "data"),
         prevent_initial_call=True,
     )
     def _load(  # type: ignore[no-untyped-def]
-        n_clicks, stem, staging_version,
+        stem, staging_version,
     ):
-        if not n_clicks or not stem:
-            return [no_update] * 27
+        if not stem:
+            return [no_update] * 25
         try:
             cfg = load_plot_config(stem)
         except FileNotFoundError:
-            return [no_update] * 26 + [
+            return [no_update] * 24 + [
                 html.Span("Saved plot not found", className="ui-feedback-danger"),
             ]
         except (ValueError, OSError):
             logger.warning("Could not load saved plot", exc_info=True)
-            return [no_update] * 26 + [
+            return [no_update] * 24 + [
                 html.Span("Load failed (corrupt file?)", className="ui-feedback-danger"),
             ]
 
@@ -401,8 +385,6 @@ def register_callbacks(app: dash.Dash) -> None:
             opt("y2_axis", "ui_y2_axis"),
             opt("title", "ui_title"),
             bool(options.get("color_by_status", d["ui_color_by_status"])),
-            int(round((options.get("width_frac") or d["ui_plot_width"] / 100.0) * 100)),
-            int(options.get("height_px") or d["ui_plot_height"]),
             float(options.get("width_scale") or d["ui_width_scale"]),
             sty("legend_mode", "ui_legend_mode"),
             int(sty("font_size", "ui_font_size")),

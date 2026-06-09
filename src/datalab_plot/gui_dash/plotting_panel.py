@@ -71,16 +71,21 @@ def _ui_revision(mode: str, x: str, y: str, y2: str, cycle: int | None) -> str:
     return f"{mode}|{x}|{y}|{y2}|{cycle if cycle is not None else ''}"
 
 
-def _empty_figure(message: str) -> go.Figure:
+def _empty_figure(message: str, theme: str = "light") -> go.Figure:
+    template = "plotly_dark" if theme == "dark" else "plotly_white"
+    text_color = "#bbb" if theme == "dark" else "#888"
     fig = go.Figure()
     fig.add_annotation(
         text=message, xref="paper", yref="paper", x=0.5, y=0.5,
-        showarrow=False, font=dict(size=16, color="#888"),
+        showarrow=False, font=dict(size=16, color=text_color),
     )
     fig.update_xaxes(visible=False)
     fig.update_yaxes(visible=False)
+    # No `height=` — let the figure inherit the container's CSS
+    # --plot-height (see .ui-plot-graph rule). Hardcoding here would
+    # shrink the placeholder to a fixed pixel height.
     fig.update_layout(
-        template="plotly_white", margin=dict(l=20, r=20, t=20, b=20), height=320,
+        template=template, margin=dict(l=20, r=20, t=20, b=20),
     )
     return fig
 
@@ -88,37 +93,6 @@ def _empty_figure(message: str) -> go.Figure:
 def _wrap_uirev(fig: go.Figure, revision: str) -> go.Figure:
     fig.update_layout(uirevision=revision)
     return fig
-
-
-def _tabs_layout(
-    tab_figs: list[tuple[str, go.Figure]],
-    cycle_summaries: dict[str, pd.DataFrame] | None,
-    payload: dict[str, dict[str, Any]],
-) -> dbc.Tabs:
-    """Build the Cycle Life tabs (3 figures + capacity table)."""
-    tabs: list[dbc.Tab] = []
-    for title, fig in tab_figs:
-        slug = title.lower().replace(" ", "-")
-        tabs.append(
-            dbc.Tab(
-                dcc.Graph(
-                    id=f"main-plot-{slug}",
-                    figure=fig,
-                    config=_PLOTLY_CONFIG,  # type: ignore[arg-type]
-                    style={"width": "100%"},
-                ),
-                label=title, tab_id=slug,
-            )
-        )
-    if cycle_summaries:
-        tabs.append(
-            dbc.Tab(
-                _capacity_table_layout(cycle_summaries, payload),
-                label="Capacity table",
-                tab_id="capacity-table",
-            )
-        )
-    return dbc.Tabs(tabs, id="main-tabs", active_tab=tabs[0].tab_id)
 
 
 def _capacity_table_layout(
@@ -152,37 +126,85 @@ def _capacity_table_layout(
 def layout() -> html.Div:
     return html.Div(
         [
-            # Single-fig modes: the main Graph is mounted ONCE here and
-            # never replaced — only its `figure` prop is written by the
-            # plot callback. This is what makes uirevision actually preserve
-            # zoom across styling changes.
+            # Onboarding hint: visible when connected AND staged set is empty.
+            # Vanishes after the first Add to plot. See _toggle_onboarding_hint.
             html.Div(
-                dcc.Graph(
-                    id="main-plot",
-                    figure=_empty_figure(
-                        "Tick rows in the picker, then click Refresh "
-                        "(or enable Auto-refresh)."
-                    ),
-                    config=_PLOTLY_CONFIG,  # type: ignore[arg-type]
-                    style={"width": "100%"},
+                dbc.Alert(
+                    [
+                        html.Strong("Get started: "),
+                        "search for cells, select rows in ",
+                        html.Strong("Search results"),
+                        ", then click ",
+                        html.Strong("+ Add to plot"),
+                        ". Your plot appears here.",
+                    ],
+                    color="info",
+                    className="mb-0",
                 ),
-                id="single-plot-container",
+                id="onboarding-hint",
+                className="mb-2",
             ),
-            # Cycle Life mode: the tabs are written into this container.
-            # Mode-switch callback toggles visibility between the two.
-            html.Div(id="tabs-plot-container", style={"display": "none"}),
+            # The main Graph is mounted ONCE here and never replaced —
+            # only its `figure` prop is written by the plot callback.
+            # This is what makes uirevision actually preserve zoom
+            # across styling changes. Plot wrapper carries a CSS
+            # variable --plot-height which the horizontal divider
+            # updates on drag, read via the .ui-plot-graph rule's
+            # `height: var(--plot-height)`.
+            html.Div(
+                [
+                    html.Div(
+                        dcc.Graph(
+                            id="main-plot",
+                            figure=_empty_figure(
+                                "Search above, then click + Add to plot to "
+                                "start plotting."
+                            ),
+                            config=_PLOTLY_CONFIG,  # type: ignore[arg-type]
+                            className="ui-plot-graph",
+                        ),
+                        id="single-plot-container",
+                    ),
+                    # Cycle Life "Capacity table" sub-view writes its
+                    # layout into this container. The three figure
+                    # sub-views go through main-plot.figure instead.
+                    html.Div(id="tabs-plot-container", style={"display": "none"}),
+                    # Horizontal drag handle for plot height (see CSS
+                    # .ui-plot-h-divider + clientside JS in app.py).
+                    html.Div(
+                        id="plot-h-divider",
+                        className="ui-plot-h-divider",
+                        title="Drag to resize the plot height",
+                    ),
+                ],
+                id="plot-resizer",
+                className="ui-plot-resizer",
+            ),
             # Reserve a fixed height for the warnings band so empty → populated
             # → empty transitions don't reflow the page below.
             html.Div(
                 id="plot-warnings",
                 style={"minHeight": "40px"},
             ),
-            html.Div(id="plot-cache-caption", className="ui-meta"),
         ]
     )
 
 
 def register_callbacks(app: dash.Dash) -> None:
+    # --- Onboarding hint: show when connected + staged is empty ---------
+    @app.callback(
+        Output("onboarding-hint", "style"),
+        Input("staging-version", "data"),
+        Input("connection-version", "data"),
+    )
+    def _toggle_onboarding_hint(_s, _c):  # type: ignore[no-untyped-def]
+        state = get_state()
+        if state.get("client") is None:
+            return {"display": "none"}
+        if state.get("staged_items"):
+            return {"display": "none"}
+        return {}
+
     # --- Main render callback --------------------------------------------
     # Outputs ONLY to figure/children/style props — never recreates
     # dcc.Graph, so uirevision keeps zoom on styling changes.
@@ -198,26 +220,36 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("opt-refresh-btn", "n_clicks"),
         Input("picker-payload", "data"),
         Input("plot-options", "data"),
+        Input("theme", "data"),
         State("opt-auto", "value"),
         State("plot-version", "data"),
         State("picker-grid", "selectedRows"),
+        State("opt-summary-view", "data"),
         prevent_initial_call=True,
     )
     def _render_plot(  # type: ignore[no-untyped-def]
-        refresh_clicks, payload, options, auto, plot_version,
-        grid_selected,
+        refresh_clicks, payload, options, _theme_store, auto, plot_version,
+        grid_selected, sum_view,
     ):
         triggered = ctx.triggered_id
         is_refresh = (triggered == "opt-refresh-btn")
-        # Gate: only run when Refresh was clicked OR Auto is on.
-        if not is_refresh and not auto:
+        # Theme toggle is a render trigger even when Auto-refresh is off:
+        # the user just clicked it and expects an immediate flip. We do
+        # NOT set force_refresh — no data re-download, just a re-render
+        # with the new Plotly template.
+        is_theme = (triggered == "theme")
+        if not is_refresh and not auto and not is_theme:
             return (no_update, no_update, no_update, no_update,
                     no_update, no_update, no_update, no_update)
+        # Theme is needed for placeholder figures even before the options
+        # dict is read.
+        theme = str((options or {}).get("theme", "light"))
         if not payload:
             return (
                 _empty_figure(
-                    "Tick rows in the picker, then click Refresh "
-                    "(or enable Auto-refresh)."
+                    "Search above, then click + Add to plot to start "
+                    "plotting.",
+                    theme=theme,
                 ),
                 no_update,
                 {},                      # single-plot visible
@@ -232,7 +264,7 @@ def register_callbacks(app: dash.Dash) -> None:
         client = state.get("client")
         if client is None:
             return (
-                _empty_figure("Not connected."),
+                _empty_figure("Not connected.", theme=theme),
                 no_update,
                 {},
                 {"display": "none"},
@@ -252,20 +284,22 @@ def register_callbacks(app: dash.Dash) -> None:
         y2_axis = options.get("y2_axis", "none")
         color_by_status = bool(options.get("color_by_status", False))
         width_scale = float(options.get("width_scale", 1.0))
-        width_frac = float(options.get("width_frac", 0.9))
-        height_px = int(options.get("height_px", 520))
         specific_capacity = bool(options.get("specific_capacity", False))
 
         raw_data = state.setdefault("raw_data", {})
         cathode_masses = state.setdefault("cathode_masses", {})
 
+        # height=None lets Plotly inherit container height (driven by the
+        # .ui-plot-graph CSS rule); width_frac stays 1.0 (plot fills the
+        # right column — no padding).
         result = build_figure_for_payload(
             client, payload, mode, cycle, title,
-            width_frac, height_px,
+            1.0, None,
             x_axis=x_axis, y_axis=y_axis, y2_axis=y2_axis,
             color_by_status=color_by_status, width_scale=width_scale, style=style,
             force_refresh=is_refresh, specific_capacity=specific_capacity,
             raw_data=raw_data, cathode_masses=cathode_masses,
+            theme=theme,
         )
 
         # Per-item errors: stash them and deselect those rows in the grid.
@@ -300,8 +334,12 @@ def register_callbacks(app: dash.Dash) -> None:
         if result.fig is None:
             return (
                 _empty_figure(
-                    "Nothing to plot — see warnings above." if warnings
-                    else "Tick rows in the picker."
+                    "All staged cells are missing cycling data — see "
+                    "warnings above."
+                    if warnings else
+                    "Search above, then click + Add to plot to start "
+                    "plotting.",
+                    theme=theme,
                 ),
                 no_update,
                 {},
@@ -330,14 +368,31 @@ def register_callbacks(app: dash.Dash) -> None:
             )
 
         if isinstance(result.fig, list):
-            # Cycle Life — tabs replace the main plot.
-            tab_figs = [(t, _wrap_uirev(f, f"{revision}|{t}")) for t, f in result.fig]
-            tabs = _tabs_layout(tab_figs, result.cycle_summaries, result.payload)
+            # Cycle Life — dispatch by active sub-view. Three figure
+            # sub-views write to main-plot.figure; "Capacity table"
+            # writes the table layout into tabs-plot-container.
+            fig_by_title = {t: f for t, f in result.fig}
+            active = sum_view or "Discharge capacity"
+            if active == "Capacity table" and result.cycle_summaries:
+                return (
+                    no_update,
+                    _capacity_table_layout(
+                        result.cycle_summaries, result.payload,
+                    ),
+                    {"display": "none"},        # hide main plot
+                    {},                          # show table container
+                    warnings, cache_caption,
+                    (plot_version or 0) + 1,
+                    new_selected_rows,
+                )
+            active_fig = fig_by_title.get(
+                active, next(iter(fig_by_title.values())),
+            )
             return (
-                no_update,                  # don't touch main-plot.figure
-                tabs,                       # populate tabs container
-                {"display": "none"},        # hide main plot
-                {},                         # show tabs
+                _wrap_uirev(active_fig, f"{revision}|{active}"),
+                no_update,
+                {},                              # show main plot
+                {"display": "none"},             # hide table container
                 warnings, cache_caption,
                 (plot_version or 0) + 1,
                 new_selected_rows,
@@ -353,6 +408,54 @@ def register_callbacks(app: dash.Dash) -> None:
             warnings, cache_caption,
             (plot_version or 0) + 1,
             new_selected_rows,
+        )
+
+    # --- Cycle Life sub-view click handler -------------------------------
+    # Fires when the user clicks one of the sub-view buttons (Discharge /
+    # Charge / CE % / Table). Reads the cached figures + summaries from
+    # session state (set by _render_plot's last successful summary
+    # run) and writes the active sub-view to main-plot / tabs container.
+    # No-op when there's no cached cycle-life result.
+    @app.callback(
+        Output("main-plot", "figure", allow_duplicate=True),
+        Output("tabs-plot-container", "children", allow_duplicate=True),
+        Output("single-plot-container", "style", allow_duplicate=True),
+        Output("tabs-plot-container", "style", allow_duplicate=True),
+        Input("opt-summary-view", "data"),
+        State("plot-options", "data"),
+        prevent_initial_call=True,
+    )
+    def _render_summary_subview(active, options):  # type: ignore[no-untyped-def]
+        state = get_state()
+        last_fig = state.get("last_fig")
+        if not isinstance(last_fig, list):
+            return no_update, no_update, no_update, no_update
+        summaries = state.get("last_cycle_summaries")
+        last_payload = (state.get("last_plot") or {}).get("payload") or {}
+        options = options or {}
+        mode = options.get("mode", "xy")
+        cycle = options.get("cycle")
+        x_axis = options.get("x_axis", "time")
+        y_axis = options.get("y_axis", "voltage")
+        y2_axis = options.get("y2_axis", "none")
+        revision = _ui_revision(mode, x_axis, y_axis, y2_axis, cycle)
+        if active == "Capacity table" and summaries:
+            return (
+                no_update,
+                _capacity_table_layout(summaries, last_payload),
+                {"display": "none"},
+                {},
+            )
+        fig_by_title = {t: f for t, f in last_fig}
+        active_fig = fig_by_title.get(
+            active or "Discharge capacity",
+            next(iter(fig_by_title.values())),
+        )
+        return (
+            _wrap_uirev(active_fig, f"{revision}|{active}"),
+            no_update,
+            {},
+            {"display": "none"},
         )
 
     # --- Capacity table cycle selector (only mounted in summary mode) -----

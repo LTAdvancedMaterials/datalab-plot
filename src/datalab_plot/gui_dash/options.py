@@ -27,6 +27,17 @@ _MARKER_MODE_MAP: dict[str, str] = {
     "Points only": "markers",
 }
 
+# Cycle Life sub-views — short button label + canonical value. The
+# values match the tuple titles produced by `_plotly_summary` so the
+# render-side dispatch is a dict lookup by title. "Capacity table"
+# routes to the capacity-table div instead of a Plotly figure.
+_SUMMARY_VIEWS: list[tuple[str, str]] = [
+    ("Discharge", "Discharge capacity"),
+    ("Charge",    "Charge capacity"),
+    ("CE %",      "Coulombic efficiency"),
+    ("Table",     "Capacity table"),
+]
+
 _PRESET_STYLE_DEFAULTS: dict[str, dict[str, Any]] = {
     "Cycle Life": {"opt-marker-mode": "Lines + points", "opt-marker-size": 10},
 }
@@ -45,17 +56,12 @@ def _legend_options() -> list[dict[str, str]]:
     ]
 
 
-def _slider(id_: str, mn: float, mx: float, step: float, value: float, **kw: Any) -> dcc.Slider:
-    marks = kw.pop("marks", None)
-    return dcc.Slider(
-        id=id_, min=mn, max=mx, step=step, value=value,
-        marks=marks if marks is not None else {},
-        tooltip={"placement": "bottom", "always_visible": False},
-        **kw,
-    )
+def preset_layout() -> html.Div:
+    """Preset segmented control + inline summary-extras.
 
-
-def layout() -> html.Div:
+    Renders under the plot in the right column so the "what am I looking
+    at" control reads as part of the visualisation.
+    """
     return html.Div(
         [
             # Preset selector: built from individual dbc.Buttons in a
@@ -88,9 +94,54 @@ def layout() -> html.Div:
                 className="preset-scroller",
             ),
             dcc.Store(id="opt-preset", data=_initial("ui_preset")),
-            html.Div(id="opt-summary-extras", className="mb-2"),
-            # Plot options toggle — same chevron-link-button pattern as the
-            # ▾ Search results / ▾ Plotting headers.
+        ],
+    )
+
+
+def summary_view_layout() -> html.Div:
+    """Cycle Life sub-view selector (Discharge / Charge / CE % / Table).
+
+    Mirrors `preset_layout()` shape so the button row visually pairs
+    with the preset row above. The container is hidden by default; the
+    `_toggle_sumview` callback reveals it when `opt-preset == "Cycle
+    Life"`.
+    """
+    initial = _SUMMARY_VIEWS[0][1]
+    return html.Div(
+        [
+            html.Div(
+                dbc.ButtonGroup(
+                    [
+                        dbc.Button(
+                            label,
+                            id={"type": "opt-sumview-btn", "value": value},
+                            color="secondary",
+                            outline=True,
+                            size="sm",
+                            active=(value == initial),
+                            n_clicks=0,
+                        )
+                        for label, value in _SUMMARY_VIEWS
+                    ],
+                    size="sm",
+                ),
+                className="preset-scroller",
+            ),
+            dcc.Store(id="opt-summary-view", data=initial),
+        ],
+        id="opt-summary-view-row",
+        style={"display": "none"},
+    )
+
+
+def config_layout() -> html.Div:
+    """Plot options collapsible + mode-conditional extras + cache caption
+    + Re-fetch / Auto-refresh row.
+
+    Renders in the left column with the rest of the controls.
+    """
+    return html.Div(
+        [
             dbc.Button(
                 ["▸ ", "Plot options"],
                 id="opt-collapse-btn",
@@ -105,17 +156,29 @@ def layout() -> html.Div:
                 is_open=False,
                 className="mb-2",
             ),
+            # Mode-conditional contextual extras (Specific-capacity toggle
+            # in Cycle Life mode; Cycle number input in dQ/dV mode).
+            # Populated by `_render_extras` based on opt-mode.
+            html.Div(id="opt-summary-extras", className="mb-2"),
+            # Cache caption: "Files: X/Y cache hit · Z/Y re-downloaded."
+            # Written by plotting_panel._render_plot.
+            html.Div(id="plot-cache-caption", className="ui-meta mb-2"),
             dbc.Row(
                 [
                     dbc.Col(
                         dbc.Button(
-                            "Refresh",
+                            "Re-fetch",
                             id="opt-refresh-btn",
                             color="primary",
                             outline=True,
                             size="sm",
                             className="w-100",
-                            title="Purge cache for selected items and re-fetch.",
+                            title=(
+                                "Re-download cell data from datalab (purges the "
+                                "local file cache for staged cells). Use if you "
+                                "suspect a cell's data has changed since the "
+                                "last fetch."
+                            ),
                         ),
                         width="auto",
                     ),
@@ -124,9 +187,17 @@ def layout() -> html.Div:
                             id="opt-auto",
                             label="Auto-refresh",
                             value=True,
+                            label_id="opt-auto-label",
                         ),
                         width="auto",
                         className="d-flex align-items-center",
+                    ),
+                    dbc.Tooltip(
+                        "Re-render the plot automatically whenever the staged "
+                        "set or options change. Doesn't re-download data — "
+                        "that's what Re-fetch does.",
+                        target="opt-auto-label",
+                        placement="top",
                     ),
                 ],
                 className="g-2 align-items-center",
@@ -216,35 +287,80 @@ def _plot_options_body() -> html.Div:
                 className="mb-3",
             ),
             html.Div("Layout & styling", className="ui-subsection-label"),
+            # Row 1 — numeric controls + Cycle colorbar switch.
             dbc.Row(
                 [
                     dbc.Col(
                         [
-                            dbc.Label("Plot width (%)", className="ui-field-label"),
-                            _slider("opt-plot-width", 40, 100, 5,
-                                    int(_initial("ui_plot_width"))),
+                            dbc.Label("X (px)", className="ui-field-label"),
+                            dbc.Input(
+                                id="opt-plot-w-px", type="number",
+                                min=100, step=10, size="sm",
+                            ),
                         ],
-                        width=4,
+                        width=2,
                     ),
                     dbc.Col(
                         [
-                            dbc.Label("Plot height (px)", className="ui-field-label"),
-                            _slider("opt-plot-height", 320, 900, 20,
-                                    int(_initial("ui_plot_height"))),
+                            dbc.Label("Y (px)", className="ui-field-label"),
+                            dbc.Input(
+                                id="opt-plot-h-px", type="number",
+                                min=200, step=10, size="sm",
+                            ),
                         ],
-                        width=4,
+                        width=2,
+                    ),
+                    dbc.Col(
+                        [
+                            dbc.Label("Text size", className="ui-field-label"),
+                            dbc.Input(
+                                id="opt-font-size", type="number",
+                                min=8, max=28, step=1,
+                                value=int(_initial("ui_font_size")),
+                                size="sm",
+                            ),
+                        ],
+                        width=2,
                     ),
                     dbc.Col(
                         [
                             dbc.Label("Trace width", className="ui-field-label"),
-                            _slider("opt-width-scale", 0.5, 5.0, 0.25,
-                                    float(_initial("ui_width_scale"))),
+                            dbc.Input(
+                                id="opt-width-scale", type="number",
+                                min=0.5, max=5.0, step=0.25,
+                                value=float(_initial("ui_width_scale")),
+                                size="sm",
+                            ),
                         ],
-                        width=4,
+                        width=2,
+                    ),
+                    dbc.Col(
+                        [
+                            dbc.Label("Marker size", className="ui-field-label"),
+                            dbc.Input(
+                                id="opt-marker-size", type="number",
+                                min=2, max=16, step=1,
+                                value=int(_initial("ui_marker_size")),
+                                size="sm",
+                            ),
+                        ],
+                        width=2,
+                    ),
+                    dbc.Col(
+                        [
+                            _label_spacer,
+                            dbc.Switch(
+                                id="opt-colorbar",
+                                label="Cycle colorbar",
+                                value=bool(_initial("ui_colorbar")),
+                            ),
+                        ],
+                        width=2,
                     ),
                 ],
                 className="g-2 mb-2",
             ),
+            # Row 2 — selects + remaining switches.
             dbc.Row(
                 [
                     dbc.Col(
@@ -257,58 +373,8 @@ def _plot_options_body() -> html.Div:
                                 size="sm",
                             ),
                         ],
-                        width=4,
+                        width=3,
                     ),
-                    dbc.Col(
-                        [
-                            dbc.Label("Text size", className="ui-field-label"),
-                            _slider("opt-font-size", 8, 28, 1,
-                                    int(_initial("ui_font_size"))),
-                        ],
-                        width=4,
-                    ),
-                    dbc.Col(
-                        [
-                            _label_spacer,
-                            dbc.Switch(
-                                id="opt-colorbar",
-                                label="Cycle colorbar (V-vs-Q only)",
-                                value=bool(_initial("ui_colorbar")),
-                            ),
-                        ],
-                        width=4,
-                    ),
-                ],
-                className="g-2 mb-2",
-            ),
-            dbc.Row(
-                [
-                    dbc.Col(
-                        dbc.Switch(
-                            id="opt-border", label="Outer border",
-                            value=bool(_initial("ui_border")),
-                        ),
-                        width=4,
-                    ),
-                    dbc.Col(
-                        dbc.Switch(
-                            id="opt-grid-x", label="Vertical gridlines",
-                            value=bool(_initial("ui_grid_x")),
-                        ),
-                        width=4,
-                    ),
-                    dbc.Col(
-                        dbc.Switch(
-                            id="opt-grid-y", label="Horizontal gridlines",
-                            value=bool(_initial("ui_grid_y")),
-                        ),
-                        width=4,
-                    ),
-                ],
-                className="g-2 mb-2",
-            ),
-            dbc.Row(
-                [
                     dbc.Col(
                         [
                             dbc.Label("Trace style", className="ui-field-label"),
@@ -322,15 +388,37 @@ def _plot_options_body() -> html.Div:
                                 size="sm",
                             ),
                         ],
-                        width=4,
+                        width=3,
                     ),
                     dbc.Col(
                         [
-                            dbc.Label("Marker size", className="ui-field-label"),
-                            _slider("opt-marker-size", 2, 16, 1,
-                                    int(_initial("ui_marker_size"))),
+                            _label_spacer,
+                            dbc.Switch(
+                                id="opt-border", label="Outer border",
+                                value=bool(_initial("ui_border")),
+                            ),
                         ],
-                        width=4,
+                        width=2,
+                    ),
+                    dbc.Col(
+                        [
+                            _label_spacer,
+                            dbc.Switch(
+                                id="opt-grid-x", label="Vertical gridlines",
+                                value=bool(_initial("ui_grid_x")),
+                            ),
+                        ],
+                        width=2,
+                    ),
+                    dbc.Col(
+                        [
+                            _label_spacer,
+                            dbc.Switch(
+                                id="opt-grid-y", label="Horizontal gridlines",
+                                value=bool(_initial("ui_grid_y")),
+                            ),
+                        ],
+                        width=2,
                     ),
                 ],
                 className="g-2 mb-3",
@@ -412,6 +500,29 @@ def register_callbacks(app: dash.Dash) -> None:
         actives = [(item["value"] == selected) for item in ids]
         return selected, actives
 
+    # --- Sub-view click → update Store + toggle active props (Cycle Life)
+    @app.callback(
+        Output("opt-summary-view", "data"),
+        Output({"type": "opt-sumview-btn", "value": ALL}, "active"),
+        Input({"type": "opt-sumview-btn", "value": ALL}, "n_clicks"),
+        State({"type": "opt-sumview-btn", "value": ALL}, "id"),
+        prevent_initial_call=True,
+    )
+    def _on_sumview_click(_clicks, ids):  # type: ignore[no-untyped-def]
+        triggered = ctx.triggered_id
+        if not isinstance(triggered, dict):
+            return no_update, [no_update] * len(ids)
+        selected = triggered["value"]
+        return selected, [(item["value"] == selected) for item in ids]
+
+    # --- Sub-view row visibility — Cycle Life preset only ----------------
+    @app.callback(
+        Output("opt-summary-view-row", "style"),
+        Input("opt-preset", "data"),
+    )
+    def _toggle_sumview(preset):  # type: ignore[no-untyped-def]
+        return {} if preset == "Cycle Life" else {"display": "none"}
+
     # --- Preset → mode/axes (and marker defaults) ------------------------
     @app.callback(
         Output("opt-mode", "value"),
@@ -451,8 +562,6 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("opt-y2-axis", "value", allow_duplicate=True),
         Output("opt-title", "value"),
         Output("opt-color-by-status", "value"),
-        Output("opt-plot-width", "value"),
-        Output("opt-plot-height", "value"),
         Output("opt-width-scale", "value"),
         Output("opt-legend-mode", "value"),
         Output("opt-font-size", "value"),
@@ -473,15 +582,14 @@ def register_callbacks(app: dash.Dash) -> None:
     )
     def _reset_options(n_clicks):  # type: ignore[no-untyped-def]
         if not n_clicks:
-            return [no_update] * 25
+            return [no_update] * 23
         d = PLOT_OPTION_DEFAULTS
         preset = d["ui_preset"]
         actives = [(p == preset) for p in PRESET_OPTIONS]
         return (
             preset, actives,
             d["ui_mode"], d["ui_x_axis"], d["ui_y_axis"], d["ui_y2_axis"],
-            d["ui_title"], d["ui_color_by_status"],
-            d["ui_plot_width"], d["ui_plot_height"], d["ui_width_scale"],
+            d["ui_title"], d["ui_color_by_status"], d["ui_width_scale"],
             d["ui_legend_mode"], d["ui_font_size"], d["ui_colorbar"],
             d["ui_border"], d["ui_grid_x"], d["ui_grid_y"],
             d["ui_marker_mode"], d["ui_marker_size"],
@@ -532,8 +640,6 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("opt-y2-axis", "value"),
         Input("opt-title", "value"),
         Input("opt-color-by-status", "value"),
-        Input("opt-plot-width", "value"),
-        Input("opt-plot-height", "value"),
         Input("opt-width-scale", "value"),
         Input("opt-legend-mode", "value"),
         Input("opt-font-size", "value"),
@@ -551,15 +657,18 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("opt-y2max", "value"),
         Input("opt-specific-capacity", "value"),
         Input("opt-cycle", "value"),
+        Input("theme", "data"),
     )
     def _aggregate(  # type: ignore[no-untyped-def]
         mode, x_axis, y_axis, y2_axis, title, color_by_status,
-        plot_width, plot_height, width_scale,
+        width_scale,
         legend_mode, font_size, colorbar, border, grid_x, grid_y,
         marker_mode, marker_size,
         xmin, xmax, ymin, ymax, y2min, y2max,
-        specific_capacity, cycle,
+        specific_capacity, cycle, theme,
     ):
+        # Plot width/height are gone — figure dimensions come from the
+        # right column's width and the .ui-plot-graph CSS height rule.
         return {
             "mode": mode,
             "x_axis": x_axis,
@@ -567,11 +676,10 @@ def register_callbacks(app: dash.Dash) -> None:
             "y2_axis": y2_axis,
             "title": title or "",
             "color_by_status": bool(color_by_status),
-            "width_frac": (int(plot_width) if plot_width else 90) / 100.0,
-            "height_px": int(plot_height) if plot_height else 520,
             "width_scale": float(width_scale) if width_scale else 1.0,
             "specific_capacity": bool(specific_capacity),
             "cycle": int(cycle) if cycle else None,
+            "theme": theme or "light",
             "style": {
                 "border": bool(border),
                 "grid_x": bool(grid_x),

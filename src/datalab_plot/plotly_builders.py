@@ -104,10 +104,11 @@ def _display_name(it: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _layout(
-    fig: go.Figure, height: int, title: str | None = None,
+    fig: go.Figure, height: int | None, title: str | None = None,
     style: PlotStyle | None = None, *,
     secondary_y: bool = False,
     n_legend_items: int = 0,
+    template: str = "plotly_white",
 ) -> go.Figure:
     style = style or PlotStyle()
     # Cap the "below" legend at 160 px; a scrollbar appears beyond that so
@@ -155,9 +156,13 @@ def _layout(
     # Use title_text (not title=) so an empty string actively clears any stale
     # title that may be set on a cached Figure object from a previous render.
     clean_title = title if title and title.lower() != "undefined" else ""
-    fig.update_layout(
+    # When `height` is None we omit it so Plotly inherits its container
+    # height (driven by the `.ui-plot-graph` CSS rule on the dcc.Graph
+    # wrapper). When a number is passed (e.g. from legacy callers /
+    # tests), use it as the explicit figure height.
+    layout_kwargs: dict[str, Any] = dict(
         title_text=clean_title,
-        template="plotly_white",
+        template=template,
         margin=dict(
             l=60, r=20, t=50 if clean_title else 30,
             b=b_below if style.legend_mode == "below" else 40,
@@ -165,7 +170,6 @@ def _layout(
         showlegend=(style.legend_mode != "none"),
         legend=legend_cfg,
         hovermode="closest",
-        height=height,
         # layout.font is the global default; tick labels inherit it. Axis
         # titles and the plot title carry their own font objects, so set
         # those explicitly too — otherwise the Text-size control only
@@ -173,6 +177,9 @@ def _layout(
         font=dict(size=style.font_size),
         title_font=dict(size=style.font_size + 3),
     )
+    if height:
+        layout_kwargs["height"] = height
+    fig.update_layout(**layout_kwargs)
     fig.update_xaxes(
         showgrid=style.grid_x,
         showline=style.border, mirror=style.border,
@@ -230,6 +237,7 @@ def _plotly_summary(
     items, raw, colors, height, width_scale: float = 1.0,
     style: PlotStyle | None = None,
     masses: dict[str, float] | None = None,
+    template: str = "plotly_white",
 ) -> list[tuple[str, go.Figure]]:
     """Return three (tab_title, figure) pairs: discharge, charge, CE."""
     specific = bool(masses)
@@ -298,7 +306,8 @@ def _plotly_summary(
             tickformat="d",
         )
         fig.update_yaxes(title_text=y_title)
-        _layout(fig, height, style=style, n_legend_items=len(items))
+        _layout(fig, height, style=style, n_legend_items=len(items),
+                template=template)
 
     return [
         ("Discharge capacity", fig_dch),
@@ -308,7 +317,8 @@ def _plotly_summary(
 
 
 def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.0,
-                             style: PlotStyle | None = None) -> go.Figure:
+                             style: PlotStyle | None = None,
+                             template: str = "plotly_white") -> go.Figure:
     """V-Q for every cycle of every cell. Each cell gets a distinct
     single-hue colour-to-dark gradient (orange first by default). Late
     cycle = dark / saturated end. The ``colors`` param is unused here.
@@ -383,7 +393,7 @@ def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.
     fig.update_xaxes(title_text="Capacity (mAh)")
     fig.update_yaxes(title_text="Voltage (V)")
     fig = _layout(fig, height, title="Voltage vs capacity, all cycles", style=style,
-                  n_legend_items=len(items))
+                  n_legend_items=len(items), template=template)
     if n_colorbars:
         # Widen the right margin so the colorbars don't overlap the plot.
         fig.update_layout(margin=dict(r=20 + 90 * n_colorbars))
@@ -391,7 +401,8 @@ def _plotly_voltage_capacity(items, raw, colors, height, width_scale: float = 1.
 
 
 def _plotly_dqdv(items, raw, colors, cycle, height, width_scale: float = 1.0,
-                 style: PlotStyle | None = None) -> go.Figure:
+                 style: PlotStyle | None = None,
+                 template: str = "plotly_white") -> go.Figure:
     fig = go.Figure()
     for it in items:
         label = it["label"]
@@ -411,11 +422,12 @@ def _plotly_dqdv(items, raw, colors, cycle, height, width_scale: float = 1.0,
     fig.update_xaxes(title_text="Voltage (V)")
     fig.update_yaxes(title_text="dQ/dV (mA/V)")
     return _layout(fig, height, title=f"dQ/dV, cycle {cycle}", style=style,
-                   n_legend_items=len(items))
+                   n_legend_items=len(items), template=template)
 
 
 def _plotly_voltage_time(items, raw, colors, height, width_scale: float = 1.0,
-                         style: PlotStyle | None = None) -> go.Figure:
+                         style: PlotStyle | None = None,
+                         template: str = "plotly_white") -> go.Figure:
     fig = go.Figure()
     for it in items:
         label = it["label"]
@@ -434,7 +446,7 @@ def _plotly_voltage_time(items, raw, colors, height, width_scale: float = 1.0,
     fig.update_xaxes(title_text="Time (h)")
     fig.update_yaxes(title_text="Voltage (V)")
     return _layout(fig, height, title="Voltage vs time", style=style,
-                   n_legend_items=len(items))
+                   n_legend_items=len(items), template=template)
 
 
 # --- Generic XY plot --------------------------------------------------------
@@ -565,10 +577,11 @@ def _xy_secondary(
 
 def _plotly_xy(
     items, raw, colors,
-    x_axis: str, y_axis: str, y2_axis: str, height: int,
+    x_axis: str, y_axis: str, y2_axis: str, height: int | None,
     color_by_status: bool = False,
     width_scale: float = 1.0,
     style: PlotStyle | None = None,
+    template: str = "plotly_white",
 ) -> go.Figure:
     """Generic X-Y plot with axes chosen from AXIS_OPTIONS.
 
@@ -650,7 +663,7 @@ def _plotly_xy(
         fig.update_yaxes(title_text=ylabel)
         title_text = f"{ytitle} vs {xtitle}{suffix}"
     fig = _layout(fig, height, title=title_text, style=style, secondary_y=has_y2,
-                  n_legend_items=len(items))
+                  n_legend_items=len(items), template=template)
     if has_y2:
         # The secondary y-axis would otherwise draw its own horizontal
         # gridlines, offset from the primary axis's — a confusing double
@@ -673,7 +686,7 @@ def _build_plotly(
     mode: str,
     cycle: int | None,
     title: str | None,
-    height: int,
+    height: int | None,
     x_axis: str = "time",
     y_axis: str = "voltage",
     y2_axis: str = "none",
@@ -681,27 +694,33 @@ def _build_plotly(
     width_scale: float = 1.0,
     style: PlotStyle | None = None,
     masses: dict[str, float] | None = None,
+    template: str = "plotly_white",
 ) -> go.Figure | list[tuple[str, go.Figure]]:
     items = _normalise_items(payload)
     colors = _assign_colors(items)
     if mode == "summary":
         return _plotly_summary(items, raw, colors, height,
-                               width_scale=width_scale, style=style, masses=masses)
+                               width_scale=width_scale, style=style,
+                               masses=masses, template=template)
     elif mode == "voltage_capacity":
         fig = _plotly_voltage_capacity(items, raw, colors, height,
-                                       width_scale=width_scale, style=style)
+                                       width_scale=width_scale, style=style,
+                                       template=template)
     elif mode == "dqdv":
         fig = _plotly_dqdv(items, raw, colors, int(cycle or 1), height,
-                           width_scale=width_scale, style=style)
+                           width_scale=width_scale, style=style,
+                           template=template)
     elif mode == "voltage_time":
         # Kept for backwards compatibility (cached figures, library parity).
         # In the GUI, V vs t is reached via mode="xy" with x=time, y=voltage.
         fig = _plotly_voltage_time(items, raw, colors, height,
-                                   width_scale=width_scale, style=style)
+                                   width_scale=width_scale, style=style,
+                                   template=template)
     elif mode == "xy":
         fig = _plotly_xy(
             items, raw, colors, x_axis, y_axis, y2_axis, height,
             color_by_status=color_by_status, width_scale=width_scale, style=style,
+            template=template,
         )
     else:
         raise ValueError(f"Unknown mode {mode!r}")
@@ -846,7 +865,7 @@ def build_figure_for_payload(
     cycle: int | None,
     title: str,
     width_frac: float,
-    height_px: int,
+    height_px: int | None,
     *,
     x_axis: str = "time",
     y_axis: str = "voltage",
@@ -858,13 +877,16 @@ def build_figure_for_payload(
     specific_capacity: bool = False,
     raw_data: dict[str, pd.DataFrame],
     cathode_masses: dict[str, float | None],
+    theme: str = "light",
 ) -> FigureResult:
     """Fetch + parse + build a Plotly figure for ``payload``, no UI framework.
 
     Mutates the ``raw_data`` / ``cathode_masses`` caches in place. The
     Streamlit and Dash front-ends both call this and translate the result
-    into their own widget surface.
+    into their own widget surface. ``theme`` selects the Plotly template
+    (``"dark"`` → ``plotly_dark``; anything else → ``plotly_white``).
     """
+    template = "plotly_dark" if theme == "dark" else "plotly_white"
     if not payload:
         return FigureResult()
 
@@ -899,7 +921,7 @@ def build_figure_for_payload(
             payload, raw_by_label, mode, cycle, title or None, height_px,
             x_axis=x_axis, y_axis=y_axis, y2_axis=y2_axis,
             color_by_status=color_by_status, width_scale=width_scale, style=style,
-            masses=masses,
+            masses=masses, template=template,
         )
     except Exception as exc:
         logger.exception("Plot build failed")
@@ -932,6 +954,10 @@ def build_figure_for_payload(
     )
 _PLOTLY_CONFIG = {
     "displaylogo": False,
+    # Let Plotly reflow to the container size on window resize (also
+    # dispatched by the column-divider drag handler in app.py). Combined
+    # with figure.layout.height=None this gives a viewport-responsive plot.
+    "responsive": True,
     # The modebar camera button exports the live Plotly figure directly —
     # pixel-accurate, no matplotlib re-render. scale=3 gives a high-res PNG.
     "toImageButtonOptions": {

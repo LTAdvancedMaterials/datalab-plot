@@ -192,6 +192,18 @@ def layout() -> html.Div:
                             },
                             "animateRows": False,
                             "stopEditingWhenCellsLoseFocus": True,
+                            # Tint already-staged rows so dedup is visible
+                            # before the user clicks Add to plot again.
+                            # Colour comes from the --ag-row-staged-bg CSS
+                            # variable so light/dark theme switching takes
+                            # effect without a grid re-render.
+                            "getRowStyle": {
+                                "function": (
+                                    "params.data.staged "
+                                    "? {'backgroundColor': "
+                                    "'var(--ag-row-staged-bg)'} : null"
+                                )
+                            },
                         },
                         style={"width": "100%", "height": "100%"},
                         className="ag-theme-alpine",
@@ -208,22 +220,35 @@ def layout() -> html.Div:
 
 
 def register_callbacks(app: dash.Dash) -> None:
-    # --- Re-seed grid rowData on new search / connect --------------------
+    # --- Re-seed grid rowData on new search / connect / staging change ---
+    # staging-version is an Input so the row tint updates immediately
+    # after Add to plot / Remove selected without waiting for the next
+    # search. The `staged` field is still set on every row — getRowStyle
+    # reads it via `params.data.staged` to apply --ag-row-staged-bg.
     @app.callback(
         Output("picker-grid", "rowData"),
         Output("picker-grid", "selectedRows"),
         Input("search-version", "data"),
         Input("connection-version", "data"),
+        Input("staging-version", "data"),
     )
-    def _render_rows(_search_v, _conn_v):  # type: ignore[no-untyped-def]
+    def _render_rows(_search_v, _conn_v, _staging_v):  # type: ignore[no-untyped-def]
         state = get_state()
         if state.get("client") is None:
             return [], []
         initial: pd.DataFrame | None = state.get("picker_initial")
         if initial is None or initial.empty:
             return [], []
+        staged_ids = {
+            r.get("item_id")
+            for r in (state.get("staged_items") or [])
+            if r.get("item_id")
+        }
+        row_data = _df_to_rowdata(initial)
+        for r in row_data:
+            r["staged"] = r.get("item_id") in staged_ids
         # Selection is ephemeral on every new search — staging is durable.
-        return _df_to_rowdata(initial), []
+        return row_data, []
 
     # --- Status: "N total · M selected" + enable/disable Add ------------
     @app.callback(
@@ -268,9 +293,11 @@ def register_callbacks(app: dash.Dash) -> None:
             return [r for r in row_data if r.get("item_id") not in selected_ids]
         return no_update
 
-    # --- Add selected rows to the staged set ----------------------------
+    # --- Add selected rows to the staged set; auto-expand Plotting ------
     @app.callback(
         Output("staging-version", "data", allow_duplicate=True),
+        Output("staged-collapse", "is_open", allow_duplicate=True),
+        Output("staged-collapse-btn", "children", allow_duplicate=True),
         Input("picker-add-btn", "n_clicks"),
         State("picker-grid", "selectedRows"),
         State("staging-version", "data"),
@@ -278,14 +305,16 @@ def register_callbacks(app: dash.Dash) -> None:
     )
     def _add_to_plot(n_clicks, selected_rows, version):  # type: ignore[no-untyped-def]
         if not n_clicks or not selected_rows:
-            return no_update
+            return no_update, no_update, no_update
         state = get_state()
         existing = state.get("staged_items") or []
         merged, n_added = _stage_from_rows(selected_rows, existing)
         if n_added == 0:
-            return no_update
+            # All selected were already staged — no version bump needed, but
+            # we still flip the Plotting section open so the user sees them.
+            return no_update, True, ["▾ ", "Plotting"]
         state["staged_items"] = merged
-        return (version or 0) + 1
+        return (version or 0) + 1, True, ["▾ ", "Plotting"]
 
     # --- Collapse toggle for the grid -----------------------------------
     @app.callback(

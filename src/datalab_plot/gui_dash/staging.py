@@ -43,21 +43,21 @@ _COLUMN_DEFS: list[dict[str, Any]] = [
         "headerName": "label",
         "editable": True,
         "width": 200,
-        "cellStyle": {"backgroundColor": "#fff8e1"},
+        "cellStyle": {"backgroundColor": "var(--ag-editable-cell-bg)"},
     },
     {
         "field": "group",
         "headerName": "group",
         "editable": True,
         "width": 130,
-        "cellStyle": {"backgroundColor": "#fff8e1"},
+        "cellStyle": {"backgroundColor": "var(--ag-editable-cell-bg)"},
     },
     {
         "field": "color",
         "headerName": "color",
         "editable": True,
         "width": 130,
-        "cellStyle": {"backgroundColor": "#fff8e1"},
+        "cellStyle": {"backgroundColor": "var(--ag-editable-cell-bg)"},
     },
 ]
 
@@ -202,70 +202,74 @@ def layout() -> html.Div:
                 ],
                 className="g-2 mb-2 align-items-center",
             ),
-            # Apply-to-selection toolbar (targets staged-grid selection)
-            html.Div(
-                dbc.Row(
-                    [
-                        dbc.Col(
-                            html.Span(
-                                id="staged-apply-prompt",
-                                className="ui-subsection-label mb-0",
-                            ),
-                            width="auto",
-                            className="d-flex align-items-center pe-2",
-                        ),
-                        dbc.Col(
-                            _apply_field(
-                                "Group", "staged-apply-group-input",
-                                "staged-apply-group-btn",
-                            ),
-                            width="auto",
-                        ),
-                        dbc.Col(
-                            _apply_field(
-                                "Color", "staged-apply-color-input",
-                                "staged-apply-color-btn",
-                            ),
-                            width="auto",
-                        ),
-                        dbc.Col(
-                            _apply_field(
-                                "Label", "staged-apply-label-input",
-                                "staged-apply-label-btn",
-                            ),
-                            width="auto",
-                        ),
-                    ],
-                    className="g-2 align-items-center flex-wrap",
-                ),
-                className="apply-toolbar mb-2",
-            ),
-            # Grid: collapsible via chevron + size-toggle via Expand.
+            # Grid + apply-toolbar collapse together under the Plotting
+            # section header. Apply-toolbar lives inside the Collapse so
+            # the section header is the single show/hide control.
             dbc.Collapse(
-                html.Div(
-                    dag.AgGrid(
-                        id="staged-grid",
-                        columnDefs=_COLUMN_DEFS,
-                        rowData=[],
-                        defaultColDef=_DEFAULT_COL_DEF,
-                        dashGridOptions={
-                            "rowSelection": {
-                                "mode": "multiRow",
-                                "checkboxes": True,
-                                "headerCheckbox": True,
-                                "enableClickSelection": True,
-                                "enableSelectionWithoutKeys": False,
-                            },
-                            "animateRows": False,
-                            "stopEditingWhenCellsLoseFocus": True,
-                        },
-                        style={"width": "100%", "height": "100%"},
-                        className="ag-theme-alpine",
-                        getRowId="params.data.item_id",
+                [
+                    # Apply-to-selection toolbar (targets staged-grid selection)
+                    html.Div(
+                        dbc.Row(
+                            [
+                                dbc.Col(
+                                    html.Span(
+                                        id="staged-apply-prompt",
+                                        className="ui-subsection-label mb-0",
+                                    ),
+                                    width="auto",
+                                    className="d-flex align-items-center pe-2",
+                                ),
+                                dbc.Col(
+                                    _apply_field(
+                                        "Group", "staged-apply-group-input",
+                                        "staged-apply-group-btn",
+                                    ),
+                                    width="auto",
+                                ),
+                                dbc.Col(
+                                    _apply_field(
+                                        "Color", "staged-apply-color-input",
+                                        "staged-apply-color-btn",
+                                    ),
+                                    width="auto",
+                                ),
+                                dbc.Col(
+                                    _apply_field(
+                                        "Label", "staged-apply-label-input",
+                                        "staged-apply-label-btn",
+                                    ),
+                                    width="auto",
+                                ),
+                            ],
+                            className="g-2 align-items-center flex-wrap",
+                        ),
+                        className="apply-toolbar mb-2",
                     ),
-                    id="staged-grid-wrapper",
-                    className="picker-grid-resizer",
-                ),
+                    html.Div(
+                        dag.AgGrid(
+                            id="staged-grid",
+                            columnDefs=_COLUMN_DEFS,
+                            rowData=[],
+                            defaultColDef=_DEFAULT_COL_DEF,
+                            dashGridOptions={
+                                "rowSelection": {
+                                    "mode": "multiRow",
+                                    "checkboxes": True,
+                                    "headerCheckbox": True,
+                                    "enableClickSelection": True,
+                                    "enableSelectionWithoutKeys": False,
+                                },
+                                "animateRows": False,
+                                "stopEditingWhenCellsLoseFocus": True,
+                            },
+                            style={"width": "100%", "height": "100%"},
+                            className="ag-theme-alpine",
+                            getRowId="params.data.item_id",
+                        ),
+                        id="staged-grid-wrapper",
+                        className="picker-grid-resizer",
+                    ),
+                ],
                 id="staged-collapse",
                 is_open=False,
             ),
