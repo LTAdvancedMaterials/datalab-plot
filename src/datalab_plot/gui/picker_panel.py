@@ -157,6 +157,16 @@ def _cb_uncheck_range() -> None:
     _set_initial(current)
 
 
+def _cb_fill_col(col: str, value_key: str) -> None:
+    """Overwrite ``col`` with the widget value for every ticked row."""
+    current = _current_picker_df()
+    if current.empty:
+        return
+    value = st.session_state.get(value_key, "")
+    current.loc[current["Select"].fillna(False).astype(bool), col] = value
+    _set_initial(current)
+
+
 def _selected_payload(picker_df: pd.DataFrame) -> dict[str, dict[str, Any]]:
     """Build the dict[label, {item_id, group?, color?}] shape plot_cycles takes."""
     payload: dict[str, dict[str, Any]] = {}
@@ -235,6 +245,25 @@ def _picker_table() -> pd.DataFrame:
         rcol[1].number_input("To", min_value=1, max_value=total, value=total, key="range_to")
         rcol[2].button("Check range", on_click=_cb_check_range, width="stretch")
         rcol[3].button("Uncheck range", on_click=_cb_uncheck_range, width="stretch")
+
+    with st.expander("Fill selected rows", expanded=False):
+        st.caption("Overwrites that column for every ticked row. Leave blank to clear.")
+        fcols = st.columns([3, 1, 3, 1, 3, 1])
+        fcols[0].text_input("Label", key="ui_fill_label", placeholder="label value",
+                            label_visibility="collapsed")
+        fcols[1].button("Fill label", key="btn_fill_label", width="stretch",
+                        on_click=_cb_fill_col, args=("label", "ui_fill_label"),
+                        disabled=selected_now == 0)
+        fcols[2].text_input("Group", key="ui_fill_group", placeholder="group name",
+                            label_visibility="collapsed")
+        fcols[3].button("Fill group", key="btn_fill_group", width="stretch",
+                        on_click=_cb_fill_col, args=("group", "ui_fill_group"),
+                        disabled=selected_now == 0)
+        fcols[4].text_input("Color", key="ui_fill_color", placeholder="'#ff8800' or 'C0'",
+                            label_visibility="collapsed")
+        fcols[5].button("Fill color", key="btn_fill_color", width="stretch",
+                        on_click=_cb_fill_col, args=("color", "ui_fill_color"),
+                        disabled=selected_now == 0)
 
     # Version-bumped-key pattern: `data=` is immutable for the lifetime of a
     # given version; bulk actions / new searches build a new initial frame
