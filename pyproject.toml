@@ -33,7 +33,12 @@ Issues = "https://github.com/ltadvancedmaterials/datalab-plot/issues"
 
 [project.optional-dependencies]
 picker = ["ipywidgets>=8"]
-gui = ["streamlit>=1.36", "plotly>=5.20"]
+gui = [
+    "dash>=2.17",
+    "dash-bootstrap-components>=1.6",
+    "dash-ag-grid>=31",
+    "plotly>=5.20",
+]
 
 [project.scripts]
 datalab-plot = "datalab_plot.cli:main"

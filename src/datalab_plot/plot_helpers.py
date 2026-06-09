@@ -1,5 +1,5 @@
-"""Small pure helpers shared across the GUI package — colour conversion,
-axis-machinery lookups, picker-frame construction. No Streamlit here.
+"""Small pure helpers for the Plotly builders — colour conversion,
+axis-machinery lookups, picker-frame construction. No UI framework imports.
 """
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 import pandas as pd
 
-from datalab_plot.gui.constants import _AXIS_TABLE, PICKER_COLUMNS, STATUS_COLOR_MAP
+from datalab_plot.plot_constants import _AXIS_TABLE, PICKER_COLUMNS, STATUS_COLOR_MAP
 from datalab_plot.series import cumulative_time_hours
 
 

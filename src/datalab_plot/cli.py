@@ -56,8 +56,8 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument("item_id")
         p.add_argument("--out", default="plot.png")
 
-    p_gui = sub.add_parser("gui", help="Launch the Streamlit GUI in a browser")
-    p_gui.add_argument("--port", type=int, default=8501)
+    p_gui = sub.add_parser("gui", help="Launch the Dash GUI in a browser")
+    p_gui.add_argument("--port", type=int, default=8050)
     p_gui.add_argument(
         "--no-browser",
         action="store_true",
@@ -129,15 +129,13 @@ def _cmd_simple(plot_fn):
 def _find_free_port(start: int, limit: int = 50) -> int:
     """Return the first free TCP port at or after ``start``.
 
-    Passing an explicit ``server.port`` to Streamlit's bootstrap disables its
-    usual "increment to the next free port" behaviour, so an occupied port
-    would otherwise be a hard launch failure. Probe upward to restore it.
+    Probe upward so an occupied default port isn't a hard launch failure.
     """
     for port in range(start, start + limit):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            # SO_REUSEADDR matches how uvicorn/Streamlit bind: without it a
-            # port left in TIME_WAIT by a just-killed server reads as busy
-            # even though the real server could bind it fine.
+            # SO_REUSEADDR matches how the Flask dev server binds: without
+            # it a port left in TIME_WAIT by a just-killed server reads as
+            # busy even though the real server could bind it fine.
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 sock.bind(("", port))
@@ -152,26 +150,17 @@ def _find_free_port(start: int, limit: int = 50) -> int:
 
 def _cmd_gui(args: argparse.Namespace) -> int:
     try:
-        from streamlit.web import bootstrap
+        from datalab_plot.gui_dash import main as dash_main
     except ImportError:
         print(
-            "Streamlit is not installed. Install with: pip install 'datalab-plot[gui]'",
+            "Dash is not installed. Install with: pip install 'datalab-plot[gui]'",
             file=sys.stderr,
         )
         return 1
-    from pathlib import Path
-
-    script = str(Path(__file__).parent / "gui" / "app.py")
     port = _find_free_port(args.port)
     if port != args.port:
         print(f"Port {args.port} is in use — starting on {port} instead.", file=sys.stderr)
-    flag_options = {
-        "server.port": port,
-        "server.headless": args.no_browser,
-        "browser.gatherUsageStats": False,
-    }
-    bootstrap.load_config_options(flag_options=flag_options)
-    bootstrap.run(script, is_hello=False, args=[], flag_options=flag_options)
+    dash_main(port=port, open_browser=not args.no_browser)
     return 0
 
 

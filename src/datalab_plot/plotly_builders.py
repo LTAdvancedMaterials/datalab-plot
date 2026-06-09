@@ -1,22 +1,34 @@
-"""Plotly figure builders, layout styling, data acquisition and plot render.
+"""Plotly figure builders, layout styling, and figure-payload data acquisition.
 
 The figure builders consume :mod:`datalab_plot.series` for all data
-preparation — the per-cycle iteration / dQ-dV / summary logic lives there and
-is shared with the matplotlib renderers in :mod:`datalab_plot.plots.echem`.
+preparation — the per-cycle iteration / dQ-dV / summary logic lives there
+and is shared with the matplotlib renderers in :mod:`datalab_plot.plots.echem`.
+
+This module is pure (no Dash, no Streamlit imports). The Dash GUI in
+:mod:`datalab_plot.gui_dash` consumes ``build_figure_for_payload`` from here
+to turn a staged-items payload + options into a Plotly figure.
 """
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
 import plotly.graph_objects as go
-import streamlit as st
 from plotly.subplots import make_subplots
 
 from datalab_plot.client import DatalabPlotClient
-from datalab_plot.gui.constants import PlotStyle
-from datalab_plot.gui.helpers import (
+from datalab_plot.parsers.echem import (
+    cycle_summary,
+    detect_status_column,
+    is_cycling_file,
+    load_echem,
+    split_by_status,
+    split_half_cycles,
+)
+from datalab_plot.plot_constants import PlotStyle
+from datalab_plot.plot_helpers import (
     _axis_col_in,
     _axis_label,
     _axis_resets,
@@ -25,15 +37,6 @@ from datalab_plot.gui.helpers import (
     _mpl_colorscale,
     _rgba_to_css,
     _status_color,
-)
-from datalab_plot.gui.picker_panel import _current_picker_df, _set_initial
-from datalab_plot.parsers.echem import (
-    cycle_summary,
-    detect_status_column,
-    is_cycling_file,
-    load_echem,
-    split_by_status,
-    split_half_cycles,
 )
 from datalab_plot.plots.echem import _assign_colors, _normalise_items
 from datalab_plot.search import extract_cathode_mass_mg
@@ -675,36 +678,41 @@ def _build_plotly(
 # Data acquisition (cached per item_id across reruns)
 # ---------------------------------------------------------------------------
 
-def _masses_keyed_by_label(payload: dict[str, dict[str, Any]]) -> dict[str, float]:
+def _masses_keyed_by_label(
+    payload: dict[str, dict[str, Any]],
+    cathode_masses: dict[str, float | None],
+) -> dict[str, float]:
     """Return cathode masses (g) keyed by plot label for items that have one."""
-    masses_by_id: dict[str, float | None] = st.session_state.get("cathode_masses", {})
     return {
         label: m
         for label, spec in payload.items()
-        if (m := masses_by_id.get(spec["item_id"])) is not None
+        if (m := cathode_masses.get(spec["item_id"])) is not None
     }
 
 
 def _ensure_data_for(
-    client: DatalabPlotClient, item_ids: list[str], *, force: bool
+    client: DatalabPlotClient,
+    item_ids: list[str],
+    *,
+    force: bool,
+    raw_data: dict[str, pd.DataFrame],
+    cathode_masses: dict[str, float | None],
 ) -> tuple[int, int, list[str], dict[str, str]]:
     """Make sure parsed echem data is loaded for each ``item_id``.
 
-    Returns ``(cache_hits, cache_misses, skipped, errors)`` where:
+    Mutates ``raw_data`` and ``cathode_masses`` in place. Returns
+    ``(cache_hits, cache_misses, skipped, errors)`` where:
       - ``skipped`` lists item_ids that have no cycling files attached.
       - ``errors`` maps item_id → short human-readable error message for
         items that failed to fetch or parse.
-    Parsed DataFrames are cached in ``st.session_state['raw_data']`` keyed
-    by item_id; items that errored are *not* cached so the next attempt
-    can retry from scratch.
+    Items that errored are *not* cached so the next attempt can retry
+    from scratch.
     """
-    raw: dict[str, pd.DataFrame] = st.session_state.setdefault("raw_data", {})
-    cathode_masses: dict[str, float | None] = st.session_state.setdefault("cathode_masses", {})
     skipped: list[str] = []
     errors: dict[str, str] = {}
     hits = misses = 0
     for iid in item_ids:
-        if not force and iid in raw:
+        if not force and iid in raw_data:
             continue
         if force:
             client.purge(iid)
@@ -724,24 +732,26 @@ def _ensure_data_for(
                 else:
                     misses += 1
             paths = [p for p, _ in results]
-            raw[iid] = load_echem(paths)
+            raw_data[iid] = load_echem(paths)
         except Exception as exc:
             # Drop any partial result and remember the failure so the caller
             # can deselect the row + show the message.
             logger.warning("Failed to load data for item %s", iid, exc_info=True)
-            raw.pop(iid, None)
+            raw_data.pop(iid, None)
             errors[iid] = f"{type(exc).__name__}: {exc}".replace("\n", " ")
     return hits, misses, skipped, errors
 
 
-def _raw_keyed_by_label(payload: dict[str, dict[str, Any]]) -> dict[str, pd.DataFrame]:
+def _raw_keyed_by_label(
+    payload: dict[str, dict[str, Any]],
+    raw_data: dict[str, pd.DataFrame],
+) -> dict[str, pd.DataFrame]:
     """Return raw data re-keyed from item_id to plot label."""
-    raw_by_id: dict[str, pd.DataFrame] = st.session_state.get("raw_data", {})
     out: dict[str, pd.DataFrame] = {}
     for label, spec in payload.items():
         iid = spec["item_id"]
-        if iid in raw_by_id:
-            out[label] = raw_by_id[iid]
+        if iid in raw_data:
+            out[label] = raw_data[iid]
     return out
 
 
@@ -773,7 +783,27 @@ def _build_capacity_table(
     return pd.DataFrame(rows)
 
 
-def _render_plot(
+@dataclass
+class FigureResult:
+    """Pure output of ``build_figure_for_payload`` — everything the UI needs.
+
+    Holds all info needed to display the result, including per-item warnings,
+    errors, and cache stats. Item-level failures don't raise — they appear in
+    ``errors``, and the caller decides what to do (e.g. deselect the row).
+    """
+    fig: go.Figure | list[tuple[str, go.Figure]] | None = None
+    last_plot: dict[str, Any] = field(default_factory=dict)
+    cycle_summaries: dict[str, pd.DataFrame] | None = None
+    hits: int = 0
+    misses: int = 0
+    skipped_labels: list[str] = field(default_factory=list)
+    skipped_no_mass: list[str] = field(default_factory=list)
+    errors: dict[str, str] = field(default_factory=dict)
+    payload: dict[str, dict[str, Any]] = field(default_factory=dict)
+    error_message: str | None = None
+
+
+def build_figure_for_payload(
     client: DatalabPlotClient,
     payload: dict[str, dict[str, Any]],
     mode: str,
@@ -790,57 +820,43 @@ def _render_plot(
     style: PlotStyle | None = None,
     force_refresh: bool,
     specific_capacity: bool = False,
-) -> None:
+    raw_data: dict[str, pd.DataFrame],
+    cathode_masses: dict[str, float | None],
+) -> FigureResult:
+    """Fetch + parse + build a Plotly figure for ``payload``, no UI framework.
+
+    Mutates the ``raw_data`` / ``cathode_masses`` caches in place. The
+    Streamlit and Dash front-ends both call this and translate the result
+    into their own widget surface.
+    """
     if not payload:
-        st.info("Tick rows in the picker to plot.")
-        return
+        return FigureResult()
 
     item_ids = [spec["item_id"] for spec in payload.values()]
-    need_fetch = force_refresh or any(
-        iid not in st.session_state.get("raw_data", {}) for iid in item_ids
+    hits, misses, skipped, errors = _ensure_data_for(
+        client, item_ids, force=force_refresh,
+        raw_data=raw_data, cathode_masses=cathode_masses,
     )
-    # None suppresses the spinner caption when nothing needs fetching.
-    with st.spinner("Fetching files & parsing…" if need_fetch else None):  # type: ignore[arg-type]
-        hits, misses, skipped, errors = _ensure_data_for(
-            client, item_ids, force=force_refresh
-        )
 
-    # Per-item failures: build a new initial DataFrame with those rows
-    # deselected and bump the widget version so the editor reflects it. We
-    # cannot mutate the current editor's state (Streamlit blocks writes to
-    # its key); a version bump replaces the widget entirely.
-    if errors:
-        broken: dict[str, str] = st.session_state.setdefault("broken_items", {})
-        broken.update(errors)
-        current = _current_picker_df()
-        if not current.empty:
-            current = current.reset_index(drop=True)
-            current.loc[current["item_id"].isin(errors.keys()), "Select"] = False
-            _set_initial(current)
-        st.rerun()
-
+    skip_labels: list[str] = []
     if skipped:
         skip_labels = [
             label for label, spec in payload.items() if spec["item_id"] in skipped
         ]
-        st.warning(
-            "No cycling files for: " + ", ".join(skip_labels) + " — omitted."
-        )
         payload = {k: v for k, v in payload.items() if v["item_id"] not in skipped}
-        if not payload:
-            return
 
-    raw_by_label = _raw_keyed_by_label(payload)
+    if not payload:
+        return FigureResult(
+            hits=hits, misses=misses, skipped_labels=skip_labels, errors=errors,
+        )
+
+    raw_by_label = _raw_keyed_by_label(payload, raw_data)
 
     masses: dict[str, float] | None = None
+    skipped_no_mass: list[str] = []
     if mode == "summary" and specific_capacity:
-        masses = _masses_keyed_by_label(payload)
+        masses = _masses_keyed_by_label(payload, cathode_masses)
         skipped_no_mass = [label for label in payload if label not in masses]
-        if skipped_no_mass:
-            st.warning(
-                "Skipped from specific capacity plot — no cathode mass recorded: "
-                + ", ".join(skipped_no_mass)
-            )
 
     try:
         fig = _build_plotly(
@@ -851,21 +867,21 @@ def _render_plot(
         )
     except Exception as exc:
         logger.exception("Plot build failed")
-        st.error(f"Plot failed: {exc}")
-        return
+        return FigureResult(
+            hits=hits, misses=misses, skipped_labels=skip_labels,
+            skipped_no_mass=skipped_no_mass, errors=errors,
+            payload=payload, error_message=f"{type(exc).__name__}: {exc}",
+        )
 
-    # Persist for re-display on subsequent reruns (so checkbox clicks don't
-    # have to rebuild + reship the figure).
-    st.session_state["last_fig"] = fig
+    cycle_summaries: dict[str, pd.DataFrame] | None = None
     if mode == "summary":
-        st.session_state["last_cycle_summaries"] = {
+        cycle_summaries = {
             label: cycle_summary(raw_by_label[label])
             for label in payload
             if label in raw_by_label
         }
-    else:
-        st.session_state.pop("last_cycle_summaries", None)
-    st.session_state["last_plot"] = {
+
+    last_plot = {
         "payload": payload, "mode": mode, "cycle": cycle, "title": title,
         "x_axis": x_axis, "y_axis": y_axis, "y2_axis": y2_axis,
         "color_by_status": color_by_status, "width_scale": width_scale,
@@ -873,10 +889,11 @@ def _render_plot(
         "hits": hits, "misses": misses,
     }
 
-    # Don't render the plot or PNG-export expander here -- main() owns the
-    # plot area so the figure persists across reruns at a stable widget key.
-
-
+    return FigureResult(
+        fig=fig, last_plot=last_plot, cycle_summaries=cycle_summaries,
+        hits=hits, misses=misses, skipped_labels=skip_labels,
+        skipped_no_mass=skipped_no_mass, errors=errors, payload=payload,
+    )
 _PLOTLY_CONFIG = {
     "displaylogo": False,
     # The modebar camera button exports the live Plotly figure directly —
@@ -887,58 +904,3 @@ _PLOTLY_CONFIG = {
         "scale": 3,
     },
 }
-
-
-def _render_cached_figure() -> None:
-    """Re-display the last rendered figure across reruns at a stable widget key.
-
-    This keeps the plot visible while the user toggles checkboxes without
-    rebuilding or re-shipping the plotly figure on every click.
-
-    When ``last_fig`` is a list of ``(tab_title, figure)`` pairs (Cycle Life
-    mode) the panels are rendered inside Streamlit tabs.
-    """
-    fig_or_tabs = st.session_state.get("last_fig")
-    if fig_or_tabs is None:
-        return
-    cfg = st.session_state.get("last_plot", {})
-    width_frac = cfg.get("width_frac", 0.9)
-    left_pad = (1.0 - width_frac) / 2
-    if left_pad > 0:
-        cols = st.columns([left_pad, width_frac, left_pad])
-        holder = cols[1]
-    else:
-        holder = st.container()
-
-    with holder:
-        if isinstance(fig_or_tabs, list):
-            cycle_summaries = st.session_state.get("last_cycle_summaries")
-            extra_tabs = ["Capacity table"] if cycle_summaries else []
-            tab_widgets = st.tabs([title for title, _ in fig_or_tabs] + extra_tabs)
-            for tab, (_, fig) in zip(tab_widgets[:len(fig_or_tabs)], fig_or_tabs, strict=True):
-                with tab:
-                    st.plotly_chart(fig, width="stretch", config=_PLOTLY_CONFIG)
-            if cycle_summaries:
-                with tab_widgets[-1]:
-                    cycle_n = st.number_input(
-                        "Cycle", min_value=1, value=2, step=1,
-                        key="capacity_table_cycle",
-                    )
-                    payload = cfg.get("payload", {})
-                    item_ids = {label: spec["item_id"] for label, spec in payload.items()}
-                    table = _build_capacity_table(cycle_summaries, int(cycle_n), item_ids)
-                    st.dataframe(table, hide_index=True, use_container_width=True)
-        else:
-            # Stable key — same widget across reruns, so Streamlit/plotly diffs
-            # rather than re-mounts when only ancillary widgets change.
-            st.plotly_chart(
-                fig_or_tabs, width="stretch", key="main_plot",
-                config=_PLOTLY_CONFIG,
-            )
-
-    hits, misses = cfg.get("hits", 0), cfg.get("misses", 0)
-    if hits + misses:
-        st.caption(
-            f"Files: {hits}/{hits + misses} cache hit · "
-            f"{misses}/{hits + misses} re-downloaded."
-        )
