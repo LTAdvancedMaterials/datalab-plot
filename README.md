@@ -6,15 +6,16 @@ Plot electrochemistry data from a [datalab](https://docs.datalab-org.io) instanc
 locally — without going through the webapp. Multi-cell cycling comparisons,
 single-cell deep dives, NMR / XRD / UV-Vis. Three user surfaces:
 
-- **Streamlit web UI** — `datalab-plot gui` opens a browser tab; search,
-  multi-select cells, pick a plot mode, zoom and pan with Plotly.
+- **Web GUI** — `datalab-plot gui` opens a browser tab on a Dash app:
+  search, stage cells, pick a plot mode, zoom and pan with Plotly. Light /
+  dark themes; one- or two-column layout.
 - **Python API** — `from datalab_plot import plot_cycles, plot_cell, find_cells, …`
   returning `matplotlib.figure.Figure` for scripts and notebooks.
 - **CLI** — `datalab-plot list / cycle / cell / nmr / xrd / uvvis` for one-shot
   PNG exports.
 
 <p align="center">
-  <img src="screenshot.png" alt="datalab-plot Streamlit web UI" width="900">
+  <img src="screenshot.png" alt="datalab-plot web GUI" width="900">
 </p>
 
 ## Quickstart
@@ -70,8 +71,9 @@ uv run datalab-plot gui
 ```
 
 `uv run` finds the `.venv` automatically — no activation needed. Your
-browser opens to `http://localhost:8501`. Paste your API key in the
-sidebar → **Connect** → search → tick rows → pick a plot mode.
+browser opens to `http://localhost:8050`. Click **Connect** in the top
+right, paste your API key → search → tick rows → **+ Add to plot** →
+pick a plot mode on the right.
 
 > Run subsequent commands from the same directory so `uv run` finds the
 > venv, or activate it once with `source .venv/bin/activate`
@@ -97,8 +99,8 @@ is missing.
 The GUI also **remembers the key** after a successful connection: it
 saves it per-instance-URL to `credentials.json` in the platform
 user-config directory (owner-only file permissions), so you don't have
-to paste it in every restart. Use *Forget saved key* in the sidebar's
-Connection panel to clear it.
+to paste it in every restart. Use *Forget saved key* in the navbar's
+connected-status dropdown to clear it.
 
 `DATALAB_PLOT_CACHE` (optional) overrides the local file cache directory.
 Default: `./cache/datalab_plot/` when run from a repo checkout, otherwise
@@ -107,29 +109,48 @@ the platform user cache (e.g. `~/.cache/datalab-plot/` on Linux).
 ## Web GUI
 
 ```bash
-datalab-plot gui                  # http://localhost:8501
+datalab-plot gui                  # http://localhost:8050
 datalab-plot gui --port 9000      # custom port
 datalab-plot gui --no-browser     # start server without opening a tab
 ```
 
-The single-page flow:
+The layout is two columns under a navbar. The left column holds the data
+workflow (search → results → staging → options → export); the right
+column holds the preset selector and the plot. A draggable vertical
+divider sets the split; the navbar has toggles for one-/two-column
+layout and light/dark theme. The connected-status item in the navbar
+also exposes cache stats and *Forget cached data / Forget saved key /
+Sign out*.
 
-1. **Sidebar — Connect.** URL is pre-filled to `https://datalab.lightningtree.ai/`;
-   paste your API key and hit *Connect*. Status flips to ✓.
+Typical flow:
+
+1. **Connect.** Click *Connect* (top right). The modal pre-fills the URL
+   if you've connected before — paste your API key and *Connect*. On
+   first launch the app auto-connects using a saved key or the
+   `DATALAB_API_KEY` env var if present.
 2. **Search.** Free-text query (e.g. `NMC811`) or leave blank to list
-   everything.
-3. **Pick.** Tick rows. **All / None / Invert / Range** buttons sit above the
-   table for bulk actions. The inline `label`, `group`, and `color` columns
-   let you rename cells and choose how they're coloured — cells sharing a
-   `group` get the same perceptually uniform colormap.
-4. **Plot.** Pick a mode (`voltage_time`, `summary`, `voltage_capacity`,
-   `dqdv`) and — for `dqdv` only — a cycle number. With *Auto-plot* on
-   (default), the plot live-updates whenever the selection changes.
-   *Refresh from server* purges the local cache for selected items and
-   re-downloads.
+   everything. The 30 most-recent items load automatically on first
+   connect so you can skip this for a quick browse.
+3. **Stage.** Tick rows in **Search results** and click *+ Add to plot*.
+   The selected rows move to the durable **Plotting** table, where the
+   `label`, `group`, and `color` columns are editable. Cells sharing a
+   `group` get the same perceptually uniform colormap. The
+   apply-to-selection toolbar bulk-fills those columns across selected
+   rows.
+4. **Plot.** Pick a preset on the right — *V vs t*, *V vs Q*, *dQ/dV*,
+   *Cycle Life*, etc. **Cycle Life** exposes a sub-view selector
+   (*Discharge* / *Charge* / *CE %* / *Table*). With *Auto-refresh* on
+   (default) the plot live-updates whenever the staged set or options
+   change. *Re-fetch* purges the on-disk cache for the staged cells and
+   re-downloads. Plot dimensions are draggable (horizontal handle for
+   height, the column divider for width) and exposed as **X / Y px**
+   fields in Plot options.
+5. **Export.** Plotly's modebar camera icon saves a PNG; *Download CSV*
+   exports the plotted data; *Save* / *Load* persist the staged set + all
+   plot options as a JSON config under your cache directory.
 
-If a cell's file can't be parsed (e.g. malformed cycler export), that row
-is auto-deselected and an error banner explains why.
+If a cell's file can't be parsed (e.g. malformed cycler export), that
+row is auto-deselected and an error banner explains why.
 
 ## Python API
 
@@ -250,10 +271,10 @@ pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmateria
 
 ### Optional extras
 
-| Extra      | Pulls in                  | Needed for                                |
-|------------|---------------------------|-------------------------------------------|
-| `[gui]`    | Streamlit, Plotly         | `datalab-plot gui` web UI                 |
-| `[picker]` | ipywidgets                | Interactive `pick_cells` in Jupyter       |
+| Extra      | Pulls in                          | Needed for                                |
+|------------|-----------------------------------|-------------------------------------------|
+| `[gui]`    | Dash, Bootstrap, AG Grid, Plotly  | `datalab-plot gui` web UI                 |
+| `[picker]` | ipywidgets                        | Interactive `pick_cells` in Jupyter       |
 
 Core library + CLI work without either:
 
@@ -338,6 +359,27 @@ PATH via *System Properties → Environment Variables*.
 
 </details>
 
+## Update to the latest version
+
+`datalab-plot` ships from the `main` branch on GitHub — pulling the latest
+build is a one-liner. Pick the row that matches how you installed.
+
+| You installed with…              | Pull the latest                                                                                       |
+|----------------------------------|-------------------------------------------------------------------------------------------------------|
+| `uv pip install …git+https…`     | `uv pip install --upgrade "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"` |
+| `uv sync` from a repo clone      | `git pull && uv sync --extra gui --extra picker`                                                      |
+| plain `pip install …git+https…`  | `pip install --upgrade "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"`    |
+
+Run the same command from the directory that holds `.venv/` (or with the
+venv activated). Drop the `[gui,picker]` extras if you didn't install them
+the first time. A running `datalab-plot gui` server keeps the old code
+in memory — quit it (`Ctrl-C`) and relaunch to pick up the new version.
+
+Tip: a saved plot config (*Save* in the Export panel) survives upgrades,
+but the in-memory parse cache and the on-disk file cache do not need to
+be cleared by hand — the file cache is size-checked and refreshes
+automatically when an upstream file changes.
+
 ## How it works
 
 The datalab webapp renders every plot server-side as Bokeh JSON and just
@@ -369,11 +411,13 @@ Rasx, Bruker `.brml` / `.raw`. Add as needed.
 src/datalab_plot/
   client.py            DatalabPlotClient: size-checked file cache
   cache.py             Cache directory resolution
+  credentials.py       Saved-key load/save + connect helper
   search.py            find_cells (search / list)
   series.py            Render-agnostic plot-series builders
+  plotly_builders.py   Plotly figure builders (used by the GUI)
   picker.py            ipywidgets multi-select for Jupyter
   cli.py               argparse entry point (incl. `gui` subcommand)
-  gui/                 Streamlit app, Plotly figures (multi-module package)
+  gui_dash/            Dash app — navbar, layout, panels, callbacks
   parsers/
     echem.py           Navani wrapper + dQ/dV + cycle-split helpers
     nmr.py             Bruker + JCAMP
@@ -387,9 +431,10 @@ notebooks/
   starter.ipynb        End-to-end demo notebook
 ```
 
-`parsers/` and `series.py` are pure (no I/O, no Streamlit) — `series.py` is
-the shared data layer feeding both the matplotlib (`plots/`) and Plotly
-(`gui/`) renderers. See [CLAUDE.md](CLAUDE.md) for the contributor guide.
+`parsers/` and `series.py` are pure (no I/O, no UI framework) —
+`series.py` is the shared data layer feeding both the matplotlib
+(`plots/`) and Plotly (`plotly_builders.py`, consumed by `gui_dash/`)
+renderers. See [CLAUDE.md](CLAUDE.md) for the contributor guide.
 
 ## License
 
