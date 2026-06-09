@@ -1,12 +1,12 @@
-"""Dash GUI entry point for datalab-plot. Launched via ``datalab-plot gui-dash``.
+"""Dash GUI entry point for datalab-plot. Launched via ``datalab-plot gui``.
 
-Parallel to the Streamlit GUI in :mod:`datalab_plot.gui`. The two share the
-same pure layer (parsers, series, plotting builders, ``PlotStyle``); only the
-rendering shell differs.
+Sole web front-end for the project. Shares the pure data layer (parsers,
+series, plot builders, ``PlotStyle``) with the Python API and CLI; this
+module is the rendering shell.
 
-The layout post-iteration-1 is a single column (no left sidebar): the
-Connect form lives in a navbar dropdown + modal, freeing the main content
-to take full width.
+Layout: two columns under a navbar. The left column owns search, picker,
+staging, plot-options, and export; the right column owns the preset
+selector + the plot. A draggable vertical divider sets the split.
 """
 from __future__ import annotations
 
@@ -54,9 +54,10 @@ _GLOBAL_CSS = """
     --bs-primary: #000072;
     --bs-primary-rgb: 0, 0, 114;
 
-    /* Type scale (4 sizes) */
+    /* Type scale (5 sizes) */
     --text-lg:   1.0625rem;   /* 17px — navbar brand only */
     --text-base: 1rem;        /* 16px — body, buttons, inputs */
+    --text-md:   0.9375rem;   /* 15px — section title (above body) */
     --text-sm:   0.8125rem;   /* 13px — field labels, captions, meta */
     --text-xs:   0.6875rem;   /* 11px — subsection labels */
 
@@ -89,10 +90,19 @@ strong { font-weight: 600; }
 
 /* Section title — applied to the chevron collapse-button label. */
 .ui-section-title {
-    font-size: 0.9375rem;     /* 15px — above body, clearly a heading */
+    font-size: var(--text-md);
     font-weight: 600;
     color: var(--text-body);
     line-height: 1.4;
+}
+
+/* Decorative status dot (e.g. navbar connection ●). Sized relative to
+   surrounding text so it scales with the line, not the type scale. */
+.connection-status-dot {
+    color: #00FFBA;
+    margin-right: 0.4rem;
+    font-size: 0.7em;
+    vertical-align: middle;
 }
 
 /* Subsection label — small uppercase muted. SOLE muted-semibold use,
@@ -189,7 +199,7 @@ strong { font-weight: 600; }
 }
 
 /* --- Misc density --------------------------------------------- */
-.dropdown-menu { font-size: 0.875rem; }
+.dropdown-menu { font-size: var(--text-sm); }
 .ag-theme-alpine,
 .ag-theme-alpine-dark { --ag-font-size: 13px; --ag-grid-size: 5px; }
 
@@ -217,18 +227,6 @@ strong { font-weight: 600; }
     text-align: center;
 }
 .preset-scroller .btn-group { flex-wrap: nowrap; }
-
-/* --- Tab headings (Cycle Life mode): style-guide alignment --------
-   Inactive: 13 px / muted / regular. Active: body / semibold. */
-.nav-tabs .nav-link {
-    font-size: var(--text-sm);
-    color: var(--text-muted);
-    font-weight: 400;
-}
-.nav-tabs .nav-link.active {
-    color: var(--text-body);
-    font-weight: 600;
-}
 
 /* --- Picker grid wrapper (collapsible + expandable) -------- */
 .picker-grid-resizer {
@@ -363,8 +361,6 @@ strong { font-weight: 600; }
 [data-bs-theme="dark"] .ui-caption,
 [data-bs-theme="dark"] .form-switch .form-check-label,
 [data-bs-theme="dark"] .ui-feedback         { color: #adb5bd; }
-[data-bs-theme="dark"] .nav-tabs .nav-link  { color: #adb5bd; }
-[data-bs-theme="dark"] .nav-tabs .nav-link.active { color: #e9ecef; }
 [data-bs-theme="dark"] .ui-feedback-success { color: #75b798; }
 [data-bs-theme="dark"] .ui-feedback-danger  { color: #ea868f; }
 [data-bs-theme="dark"] .picker-grid-resizer { background: #2b2f33; border-color: #444a52; }
@@ -635,7 +631,6 @@ def _make_app() -> dash.Dash:
                     "Connect to a datalab instance from the top-right Connect "
                     "button to begin.",
                     color="info",
-                    className="mt-2",
                 ),
             )
         return {}, ""
@@ -835,24 +830,31 @@ def _make_app() -> dash.Dash:
         prevent_initial_call=True,
     )
 
-    # Theme toggle [☀ | ☾] ButtonGroup in navbar — flips
-    # `data-bs-theme` on <html> (chrome), swaps both AG Grids'
-    # className (alpine ↔ alpine-dark), toggles the active prop on
-    # both buttons, and writes the theme Store. The plot follows
-    # because plotting_panel._render_plot now has Input("theme") and
-    # treats it as a render trigger.
+    # Theme toggle [◯ | ☾] ButtonGroup in navbar. Three behaviours
+    # share one callback:
+    #   * initial layout (no triggered_id) — match the OS theme via
+    #     `prefers-color-scheme`. Page-load only; user toggle wins
+    #     afterwards.
+    #   * theme-light / theme-dark click — manual override for the
+    #     session.
+    # Each path flips `data-bs-theme` on <html> (chrome CSS), swaps
+    # both AG Grids' className (alpine ↔ alpine-dark), toggles the
+    # active prop on both buttons, and writes the theme Store. The
+    # plot follows because plotting_panel._render_plot has
+    # Input("theme") and treats it as a render trigger.
     app.clientside_callback(
         """
         function(nL, nD) {
             const trig = window.dash_clientside.callback_context.triggered_id;
-            if (!trig) return [
-                window.dash_clientside.no_update,
-                window.dash_clientside.no_update,
-                window.dash_clientside.no_update,
-                window.dash_clientside.no_update,
-                window.dash_clientside.no_update,
-            ];
-            const next = (trig === 'theme-dark') ? 'dark' : 'light';
+            let next;
+            if (!trig) {
+                // Initial fire — match OS preference.
+                const sysDark = window.matchMedia &&
+                    window.matchMedia('(prefers-color-scheme: dark)').matches;
+                next = sysDark ? 'dark' : 'light';
+            } else {
+                next = (trig === 'theme-dark') ? 'dark' : 'light';
+            }
             document.documentElement.setAttribute('data-bs-theme', next);
             const cls = (next === 'dark')
                 ? 'ag-theme-alpine-dark'
@@ -867,7 +869,6 @@ def _make_app() -> dash.Dash:
         Output("staged-grid", "className"),
         Input("theme-light", "n_clicks"),
         Input("theme-dark", "n_clicks"),
-        prevent_initial_call=True,
     )
 
     return app

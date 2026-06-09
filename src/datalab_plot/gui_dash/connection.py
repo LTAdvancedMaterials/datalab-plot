@@ -339,15 +339,7 @@ def register_callbacks(app: dash.Dash) -> None:
             dbc.DropdownMenu(
                 items,
                 label=[
-                    html.Span(
-                        "●",
-                        style={
-                            "color": "#00FFBA",
-                            "marginRight": "0.4rem",
-                            "fontSize": "0.7em",
-                            "verticalAlign": "middle",
-                        },
-                    ),
+                    html.Span("●", className="connection-status-dot"),
                     server_name,
                 ],
                 color="light",

@@ -626,7 +626,7 @@ def register_callbacks(app: dash.Dash) -> None:
             [
                 dbc.Switch(id="opt-specific-capacity", value=False,
                            style={"display": "none"}),
-                dbc.Input(id="opt-cycle", type="number", value=1,
+                dbc.Input(id="opt-cycle", type="number", value=1, size="sm",
                           style={"display": "none"}),
             ]
         )

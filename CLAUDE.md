@@ -111,7 +111,7 @@ gui_dash/
 ├── picker.py         "Search results" AG Grid — browse-only, with Add-to-plot
 ├── staging.py        "Plotting" AG Grid — durable, editable label/group/color
 ├── options.py        Preset segmented control + Plot-options collapsible
-├── plotting_panel.py Main dcc.Graph (stable mount) + Cycle Life tabs
+├── plotting_panel.py Main dcc.Graph (stable mount) + Cycle Life sub-views
 ├── export.py         CSV + Save / Load plot config (JSON)
 ├── plot_io.py        Pure save/load helpers for plot-config JSONs
 └── assets/
@@ -178,7 +178,7 @@ resize event makes the figure recompute when either divider moves.
 | Control | Effect |
 |---|---|
 | `[▯] [▯▯]` button group | Toggles `.force-single-col` on `#main-content`. `[▯▯]` (two-column) is active by default. Stays force-single until `[▯▯]` is clicked or the page is reloaded. The single white-rectangle / double white-rectangle glyphs (U+25AF) mirror the layout visually. |
-| `[☀] [☾]` button group | Toggles `data-bs-theme="dark"` on `<html>` AND writes `dcc.Store(id="theme")`. Glyphs are flat monochrome (U+2600 BLACK SUN WITH RAYS, U+263E LAST QUARTER MOON), same style as the column toggle. Flips: page chrome (`[data-bs-theme="dark"]` CSS overrides), both AG Grids' className (`ag-theme-alpine` ↔ `ag-theme-alpine-dark`), the Plotly figure template (`plotly_white` ↔ `plotly_dark`), the staged-row tint (`--ag-row-staged-bg`) and editable-cell tint (`--ag-editable-cell-bg`). The plot re-renders on theme change even when Auto-refresh is off — `_render_plot` has `Input("theme", "data")` and treats it as a render trigger (without `force_refresh`). |
+| `[◯] [☾]` button group | Toggles `data-bs-theme="dark"` on `<html>` AND writes `dcc.Store(id="theme")`. On first load, the theme matches the OS preference via `prefers-color-scheme` — the same clientside callback fires with `triggered_id=null` on initial layout and reads `window.matchMedia('(prefers-color-scheme: dark)')`. Manual clicks override for the session; refreshing re-applies the OS preference. Glyphs are flat line-art (U+25EF LARGE CIRCLE, U+263E LAST QUARTER MOON) — both monochrome with no emoji counterpart, so they pair visually. The toggle flips: page chrome (`[data-bs-theme="dark"]` CSS overrides), both AG Grids' className (`ag-theme-alpine` ↔ `ag-theme-alpine-dark`), the Plotly figure template (`plotly_white` ↔ `plotly_dark`), the staged-row tint (`--ag-row-staged-bg`) and editable-cell tint (`--ag-editable-cell-bg`). The plot re-renders on theme change even when Auto-refresh is off — `_render_plot` has `Input("theme", "data")` and treats it as a render trigger (without `force_refresh`). |
 | `✓ ServerName ▾` dropdown (when connected) | Cache stats header + Forget cached data / Forget saved key / Sign out. |
 | `Connect` button (when disconnected) | Opens the credentials modal. |
 
@@ -332,15 +332,16 @@ Brand palette:
 - `#E6EAEE` grey — navbar + apply-toolbar soft surface
 - `#00FFBA` mint — connected-status dot (single use)
 - `#FAB400` gold — warning-alert tint
-- `#0083FF` bright blue — reserved (not currently used; avoid pairing
-  with the navy primary)
+- `#0083FF` bright blue — dark-mode primary (replaces navy, which goes
+  illegibly dim on the dark body). Do not use it in the light theme — it
+  pairs poorly with the navy primary.
 
 Button hierarchy (single source of truth):
 - **Solid primary** — modal Connect submit, navbar Connect (disconnected).
 - **Outline primary** — Search, Refresh, Apply (×3 in staging), Save,
   Add to plot.
 - **Outline secondary** — All / None / Invert, Cancel, Dismiss, Export
-  CSV, Load, Delete, Remove selected.
+  CSV, Delete, Remove selected.
 - **Link** — collapse/expand chevrons. Apply `ui-section-title` to the
   primary collapse toggle (e.g. `▾ Search results`, `▾ Plotting`,
   `▸ Plot options`), and `ui-caption` to secondary accessory links
@@ -380,8 +381,11 @@ extend the class table here, not invent a one-off.
 
 #### Rules
 
-- **Type scale — 4 sizes only**: 17px (navbar brand) / 16px (body) / 13px
-  (`--text-sm`) / 11px (`--text-xs`). Never set `font-size` inline.
+- **Type scale — 5 sizes only**: 17px (navbar brand) / 16px (body) / 15px
+  (`--text-md`, section titles) / 13px (`--text-sm`) / 11px (`--text-xs`).
+  Never set `font-size` inline. The one tolerated exception is a relative
+  size (`em`-based) on a decorative glyph that should track its
+  surrounding text — see `.connection-status-dot`.
 - **Weight — 2 weights only**: 400 regular, 600 semibold. **Never `fw-bold`
   (700)**. `<strong>` is globally rebalanced to 600 in `_GLOBAL_CSS`.
 - **Color**: never combine `text-muted` with semibold weight outside of
@@ -591,8 +595,9 @@ GUI edits:
   `datalab_url` for reference but loading against a different instance
   will silently fail to find items.
 - A "share via URL" feature.
-- Persisting theme preference across page reloads. The 🌙 toggle is
-  session-local — refresh resets to light.
+- Persisting the *user's manual* theme override across page reloads.
+  Initial theme matches the OS via `prefers-color-scheme`; manual
+  toggles are session-local. Refresh re-applies the OS preference.
 - Adapting trace palettes (STATUS_COLOR_MAP, tab10) to the dark
   template. The stock mid-saturation colours read on both
   backgrounds; revisit only if legibility complaints arise.
