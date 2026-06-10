@@ -1,0 +1,8 @@
+{
+  "$schema": "https://conductor.build/schemas/conductor.json",
+  "scripts": {
+    "setup": "./.conductor/setup.sh",
+    "run": "./.conductor/run.sh"
+  },
+  "runScriptMode": "concurrent"
+}

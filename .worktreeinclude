@@ -1,0 +1,6 @@
+# Gitignored files that Conductor copies from the repo root into every new
+# workspace. These are static files git won't carry over on its own.
+#
+# Credentials: DATALAB_URL / DATALAB_API_KEY live here (gitignored). Without
+# this line a fresh workspace starts with no .env and the GUI can't connect.
+.env
