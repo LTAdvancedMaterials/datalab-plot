@@ -189,6 +189,26 @@ def layout() -> html.Div:
                         width="auto",
                     ),
                     dbc.Col(
+                        dbc.ButtonGroup(
+                            [
+                                dbc.Button(
+                                    "All", id="staged-btn-all", size="sm",
+                                    color="secondary", outline=True,
+                                ),
+                                dbc.Button(
+                                    "None", id="staged-btn-none", size="sm",
+                                    color="secondary", outline=True,
+                                ),
+                                dbc.Button(
+                                    "Invert", id="staged-btn-invert", size="sm",
+                                    color="secondary", outline=True,
+                                ),
+                            ],
+                            size="sm",
+                        ),
+                        width="auto",
+                    ),
+                    dbc.Col(
                         dbc.Button(
                             "Remove selected",
                             id="staged-remove-btn",
@@ -250,10 +270,15 @@ def layout() -> html.Div:
                                             ),
                                         ],
                                         id="staged-apply-fields",
-                                        className=(
-                                            "d-flex gap-2 flex-wrap "
-                                            "align-items-center"
-                                        ),
+                                        # Hidden by default. `_selection_state`
+                                        # toggles the CLASSNAME (not an inline
+                                        # style): Bootstrap's `.d-flex` is
+                                        # `display:flex !important`, which an
+                                        # inline `display:none` cannot override
+                                        # — so visibility must be driven by
+                                        # swapping `.d-flex…` ↔ `.d-none` (also
+                                        # !important), never an inline style.
+                                        className="d-none",
                                     ),
                                     width=True,
                                 ),
@@ -325,18 +350,26 @@ def register_callbacks(app: dash.Dash) -> None:
     # --- Update apply-toolbar prompt + Remove-btn disabled on selection --
     # Also toggles `staged-apply-fields.style` so the Group / Color /
     # Label inputs only appear when there's a selection to act on.
+    # Re-fires on `staging-version` too: when the table is emptied
+    # (Remove / Reset), AG Grid can leave `selectedRows` stale-non-empty,
+    # so we additionally gate on the live staged-item count — an empty
+    # table always reads as zero selection (fields hidden).
+    _APPLY_FIELDS_SHOWN = "d-flex gap-2 flex-wrap align-items-center"
+
     @app.callback(
         Output("staged-apply-prompt", "children"),
-        Output("staged-apply-fields", "style"),
+        Output("staged-apply-fields", "className"),
         Output("staged-apply-group-btn", "disabled"),
         Output("staged-apply-color-btn", "disabled"),
         Output("staged-apply-label-btn", "disabled"),
         Output("staged-remove-btn", "disabled"),
         Input("staged-grid", "selectedRows"),
+        Input("staging-version", "data"),
         prevent_initial_call=False,
     )
-    def _selection_state(selected_rows):  # type: ignore[no-untyped-def]
-        n = len(selected_rows or [])
+    def _selection_state(selected_rows, _v):  # type: ignore[no-untyped-def]
+        staged = get_state().get("staged_items") or []
+        n = len(selected_rows or []) if staged else 0
         if n == 0:
             prompt = "Apply to selection — pick rows first:"
         elif n == 1:
@@ -344,8 +377,33 @@ def register_callbacks(app: dash.Dash) -> None:
         else:
             prompt = f"Apply to {n} staged rows:"
         disabled = n == 0
-        fields_style = {"display": "none"} if n == 0 else {}
-        return prompt, fields_style, disabled, disabled, disabled, disabled
+        fields_cls = "d-none" if n == 0 else _APPLY_FIELDS_SHOWN
+        return prompt, fields_cls, disabled, disabled, disabled, disabled
+
+    # --- Bulk select: All / None / Invert (mirrors picker._bulk_select) ---
+    @app.callback(
+        Output("staged-grid", "selectedRows", allow_duplicate=True),
+        Input("staged-btn-all", "n_clicks"),
+        Input("staged-btn-none", "n_clicks"),
+        Input("staged-btn-invert", "n_clicks"),
+        State("staged-grid", "rowData"),
+        State("staged-grid", "selectedRows"),
+        prevent_initial_call=True,
+    )
+    def _bulk_select_staged(_a, _n, _i, row_data, selected_rows):  # type: ignore[no-untyped-def]
+        if not row_data:
+            return no_update
+        triggered = ctx.triggered_id
+        if triggered == "staged-btn-all":
+            return row_data
+        if triggered == "staged-btn-none":
+            return []
+        if triggered == "staged-btn-invert":
+            selected_ids = {
+                r.get("item_id") for r in (selected_rows or []) if r.get("item_id")
+            }
+            return [r for r in row_data if r.get("item_id") not in selected_ids]
+        return no_update
 
     # --- Apply group / color / label to selected staged rows -------------
     @app.callback(

@@ -324,12 +324,20 @@ Two layers:
   references resolve at paint time, so theme switches re-tint
   without a grid re-render.
 
-- **Conditional widgets that get re-mounted on Input change can race.**
-  `options._render_extras` swaps `opt-specific-capacity` and `opt-cycle`
-  in/out based on mode. Writing to them in the same callback as
-  `opt-mode.value` is not safe — the load-plot-config callback in
-  `export.py` deliberately skips these two and leaves them at default.
-  Documented limitation; not a bug.
+- **`opt-specific-capacity` and `opt-cycle` must ALWAYS be mounted.**
+  Both are Inputs to `options._aggregate`, and a Dash callback cannot
+  fire unless every one of its Input components exists in the current
+  layout. `options._render_extras` therefore mounts BOTH in every mode
+  and only toggles their `display` (specific-capacity visible in
+  `summary`, cycle visible in `dqdv`, both hidden otherwise). Do NOT
+  "optimise" it back to mounting only the relevant one per mode: that
+  silently breaks `_aggregate` whenever you switch directly between the
+  two modes that each mount only one widget (dQ/dV ↔ Cycle Life), so
+  `plot-options` never updates and the plot freezes. (Other transitions
+  hid the bug because the xy modes re-mount both.) Separately, the
+  load-plot-config callback in `export.py` deliberately skips writing
+  these two — they re-mount (resetting to defaults) on every mode
+  change, which would race a same-callback write.
 
 - **`prevent_initial_call="initial_duplicate"`** is required (not just
   `True`) on any callback whose Output has `allow_duplicate=True` AND

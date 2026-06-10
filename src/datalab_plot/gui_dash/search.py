@@ -62,11 +62,23 @@ def layout() -> html.Div:
                         size="sm",
                     ),
                     dbc.Button(
-                        "Search",
+                        # The label is wrapped in a dbc.Spinner whose
+                        # inner Span is an Output of `_on_search`. While
+                        # that callback runs, Dash flags the Span's
+                        # loading_state and the Spinner replaces the
+                        # "Search" text with a spinner — reverting on
+                        # completion. minWidth keeps the button from
+                        # collapsing to spinner-width mid-search.
+                        dbc.Spinner(
+                            html.Span("Search", id="search-btn-label"),
+                            size="sm",
+                            color="primary",
+                        ),
                         id="search-btn",
                         color="primary",
                         outline=True,
                         size="sm",
+                        style={"minWidth": "5rem"},
                     ),
                 ],
                 size="sm",
@@ -113,10 +125,15 @@ def register_callbacks(app: dash.Dash) -> None:
         return (search_version or 0) + 1, summary, ""
 
     # --- Manual search ---------------------------------------------------
+    # The `search-btn-label` output is a no-op text-wise (always returns
+    # no_update); it exists only so the Span enters loading_state while
+    # this callback runs, which the wrapping dbc.Spinner turns into an
+    # in-button spinner. See layout().
     @app.callback(
         Output("search-version", "data", allow_duplicate=True),
         Output("search-summary", "children", allow_duplicate=True),
         Output("search-error", "children", allow_duplicate=True),
+        Output("search-btn-label", "children"),
         Input("search-btn", "n_clicks"),
         Input("search-input", "n_submit"),
         State("search-input", "value"),
@@ -127,7 +144,7 @@ def register_callbacks(app: dash.Dash) -> None:
         state = get_state()
         client = state.get("client")
         if client is None:
-            return no_update, no_update, no_update
+            return no_update, no_update, no_update, no_update
         try:
             df = find_cells(
                 query=(query or None),
@@ -137,7 +154,7 @@ def register_callbacks(app: dash.Dash) -> None:
             )
         except Exception as exc:
             logger.warning("Search failed", exc_info=True)
-            return no_update, no_update, f"Search failed: {exc}"
+            return no_update, no_update, f"Search failed: {exc}", no_update
         summary = (
             f"{len(df)} result(s) for “{query}”"
             if query
@@ -149,4 +166,4 @@ def register_callbacks(app: dash.Dash) -> None:
             df, _prior_selected_dict(prior)
         ).reset_index(drop=True)
         state.pop("picker_last_edited", None)
-        return (search_version or 0) + 1, summary, ""
+        return (search_version or 0) + 1, summary, "", no_update

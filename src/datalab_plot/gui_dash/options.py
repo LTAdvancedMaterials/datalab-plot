@@ -598,36 +598,46 @@ def register_callbacks(app: dash.Dash) -> None:
         )
 
     # --- Inline extras: specific-capacity (summary only) + cycle (dqdv only) ---
+    # CRITICAL: both `opt-specific-capacity` and `opt-cycle` must stay
+    # mounted in EVERY mode — they're both Inputs to `_aggregate`, and a
+    # Dash callback can't fire unless all its Input components exist in
+    # the current layout. If a mode mounts only one of the two (as an
+    # earlier version did: summary→switch-only, dqdv→cycle-only), then
+    # switching directly between those two modes always leaves the other
+    # widget missing, so `_aggregate` can never resolve its dependency
+    # graph → `plot-options` never updates → the plot is stuck. (Other
+    # transitions worked only because the xy modes re-mount both.)
+    # So: toggle VISIBILITY, never presence.
     @app.callback(
         Output("opt-summary-extras", "children"),
         Input("opt-mode", "value"),
     )
     def _render_extras(mode):  # type: ignore[no-untyped-def]
-        if mode == "summary":
-            return dbc.Switch(
-                id="opt-specific-capacity",
-                label="Specific capacity (mAh/g) — divide by cathode mass from datalab",
-                value=False,
-            )
-        if mode == "dqdv":
-            return dbc.InputGroup(
-                [
-                    dbc.InputGroupText("Cycle"),
-                    dbc.Input(
-                        id="opt-cycle", type="number", min=1, step=1, value=1,
-                        size="sm",
-                    ),
-                ],
-                size="sm",
-                style={"maxWidth": "180px"},
-            )
-        # Mount the IDs even when hidden so the aggregator can read them.
+        sc_hidden = None if mode == "summary" else {"display": "none"}
+        cyc_hidden = None if mode == "dqdv" else {"display": "none"}
         return html.Div(
             [
-                dbc.Switch(id="opt-specific-capacity", value=False,
-                           style={"display": "none"}),
-                dbc.Input(id="opt-cycle", type="number", value=1, size="sm",
-                          style={"display": "none"}),
+                dbc.Switch(
+                    id="opt-specific-capacity",
+                    label=(
+                        "Specific capacity (mAh/g) — divide by cathode "
+                        "mass from datalab"
+                    ),
+                    value=False,
+                    style=sc_hidden,
+                ),
+                dbc.InputGroup(
+                    [
+                        dbc.InputGroupText("Cycle"),
+                        dbc.Input(
+                            id="opt-cycle", type="number", min=1, step=1,
+                            value=1, size="sm",
+                        ),
+                    ],
+                    size="sm",
+                    style={"maxWidth": "180px"} if cyc_hidden is None
+                    else {"display": "none"},
+                ),
             ]
         )
 
