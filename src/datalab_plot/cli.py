@@ -57,7 +57,7 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument("--out", default="plot.png")
 
     p_gui = sub.add_parser("gui", help="Launch the Dash GUI in a browser")
-    p_gui.add_argument("--port", type=int, default=8050)
+    p_gui.add_argument("--port", type=int, default=8501)
     p_gui.add_argument(
         "--no-browser",
         action="store_true",

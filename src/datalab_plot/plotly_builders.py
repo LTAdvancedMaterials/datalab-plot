@@ -945,6 +945,9 @@ def build_figure_for_payload(
         "color_by_status": color_by_status, "width_scale": width_scale,
         "width_frac": width_frac, "height_px": height_px,
         "hits": hits, "misses": misses,
+        # Used by plotting_panel._render_plot's gate to detect
+        # theme switches even when the auto-refresh option is off.
+        "theme": theme,
     }
 
     return FigureResult(

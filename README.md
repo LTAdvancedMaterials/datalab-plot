@@ -71,7 +71,7 @@ uv run datalab-plot gui
 ```
 
 `uv run` finds the `.venv` automatically — no activation needed. Your
-browser opens to `http://localhost:8050`. Click **Connect** in the top
+browser opens to `http://localhost:8501`. Click **Connect** in the top
 right, paste your API key → search → tick rows → **+ Add to plot** →
 pick a plot mode on the right.
 
@@ -109,7 +109,7 @@ the platform user cache (e.g. `~/.cache/datalab-plot/` on Linux).
 ## Web GUI
 
 ```bash
-datalab-plot gui                  # http://localhost:8050
+datalab-plot gui                  # http://localhost:8501
 datalab-plot gui --port 9000      # custom port
 datalab-plot gui --no-browser     # start server without opening a tab
 ```

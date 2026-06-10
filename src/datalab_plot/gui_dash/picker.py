@@ -190,6 +190,14 @@ def layout() -> html.Div:
                                 "enableClickSelection": True,
                                 "enableSelectionWithoutKeys": False,
                             },
+                            # Pin the auto-injected selection column to
+                            # the very left, ahead of the pinned-left
+                            # `item_id` column.
+                            "selectionColumnDef": {
+                                "pinned": "left",
+                                "width": 40,
+                                "suppressMovable": True,
+                            },
                             "animateRows": False,
                             "stopEditingWhenCellsLoseFocus": True,
                             # Tint already-staged rows so dedup is visible

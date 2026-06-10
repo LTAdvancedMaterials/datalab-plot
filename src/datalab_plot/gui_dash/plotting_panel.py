@@ -11,11 +11,12 @@ its ``figure`` prop. Combined with ``layout.uirevision`` keyed on the
 mode + axis configuration, Plotly preserves UI state (zoom, pan, legend
 toggles) across styling changes.
 
-**Vertical stability**: no ``dcc.Loading`` wrapper (it momentarily
-collapses the section height); a fixed-height warnings container so
-appearing/disappearing alerts don't reflow the page; horizontal padding
-on the plot wrapper instead of variable left/right padding that would
-shift the plot box between renders.
+**Vertical stability**: ``dcc.Loading`` is used in **overlay** mode
+(``overlay_style={"visibility": "visible", ...}`` + ``target_components
+={"main-plot": "figure", "tabs-plot-container": "children"}``) so the
+Graph stays mounted under the spinner — the default child-swap mode
+would collapse the height and drop uirevision. A fixed-height warnings
+container keeps appearing/disappearing alerts from reflowing the page.
 """
 from __future__ import annotations
 
@@ -71,14 +72,24 @@ def _ui_revision(mode: str, x: str, y: str, y2: str, cycle: int | None) -> str:
     return f"{mode}|{x}|{y}|{y2}|{cycle if cycle is not None else ''}"
 
 
-def _empty_figure(message: str, theme: str = "light") -> go.Figure:
+def _empty_figure(message: str = "", theme: str = "light") -> go.Figure:
+    """Blank-canvas placeholder figure.
+
+    When ``message`` is empty the figure renders with no annotation —
+    the dcc.Loading overlay's spinner then sits cleanly on a blank
+    backdrop rather than partially hiding text. Educational messaging
+    for the empty state lives in the onboarding hint above the plot
+    panel; reserve ``message`` for informative states only ("Not
+    connected.", "All staged cells are missing cycling data…").
+    """
     template = "plotly_dark" if theme == "dark" else "plotly_white"
     text_color = "#bbb" if theme == "dark" else "#888"
     fig = go.Figure()
-    fig.add_annotation(
-        text=message, xref="paper", yref="paper", x=0.5, y=0.5,
-        showarrow=False, font=dict(size=16, color=text_color),
-    )
+    if message:
+        fig.add_annotation(
+            text=message, xref="paper", yref="paper", x=0.5, y=0.5,
+            showarrow=False, font=dict(size=16, color=text_color),
+        )
     fig.update_xaxes(visible=False)
     fig.update_yaxes(visible=False)
     # No `height=` — let the figure inherit the container's CSS
@@ -153,24 +164,64 @@ def layout() -> html.Div:
             # `height: var(--plot-height)`.
             html.Div(
                 [
-                    html.Div(
-                        dcc.Graph(
-                            id="main-plot",
-                            figure=_empty_figure(
-                                "Search above, then click + Add to plot to "
-                                "start plotting."
+                    # dcc.Loading v2 overlay API: keeps the underlying
+                    # Graph mounted (so uirevision survives) and layers
+                    # a translucent spinner overlay only when these
+                    # specific outputs are being computed. The 200 ms
+                    # `delay_show` suppresses flicker on pure styling
+                    # re-renders that complete in < 200 ms.
+                    dcc.Loading(
+                        id="plot-loading",
+                        type="circle",
+                        # Brand bright-blue: reads on both light and
+                        # dark backdrops. Navy disappeared against the
+                        # dark body.
+                        color="#0083FF",
+                        delay_show=200,
+                        parent_style={"position": "relative"},
+                        overlay_style={
+                            "visibility": "visible",
+                            # Theme-aware tint defined in _GLOBAL_CSS:
+                            # opaque enough (92 %) to obscure the
+                            # empty-state placeholder text.
+                            "backgroundColor": "var(--plot-loading-bg)",
+                            "transition": "visibility 0.1s",
+                        },
+                        # Dash's TargetComponents TypedDict is declared
+                        # with zero keys, so any literal trips mypy.
+                        # The runtime accepts any {component_id: prop |
+                        # list[prop]} mapping.
+                        target_components={  # type: ignore[arg-type]
+                            "main-plot": "figure",
+                            "tabs-plot-container": "children",
+                        },
+                        children=[
+                            html.Div(
+                                dcc.Graph(
+                                    id="main-plot",
+                                    # Blank placeholder — the onboarding
+                                    # hint above the plot panel handles
+                                    # the empty-state messaging.
+                                    figure=_empty_figure(),
+                                    config=_PLOTLY_CONFIG,  # type: ignore[arg-type]
+                                    className="ui-plot-graph",
+                                ),
+                                id="single-plot-container",
                             ),
-                            config=_PLOTLY_CONFIG,  # type: ignore[arg-type]
-                            className="ui-plot-graph",
-                        ),
-                        id="single-plot-container",
+                            # Cycle Life "Capacity table" sub-view
+                            # writes its layout into this container.
+                            # The three figure sub-views go through
+                            # main-plot.figure instead.
+                            html.Div(
+                                id="tabs-plot-container",
+                                style={"display": "none"},
+                            ),
+                        ],
                     ),
-                    # Cycle Life "Capacity table" sub-view writes its
-                    # layout into this container. The three figure
-                    # sub-views go through main-plot.figure instead.
-                    html.Div(id="tabs-plot-container", style={"display": "none"}),
                     # Horizontal drag handle for plot height (see CSS
                     # .ui-plot-h-divider + clientside JS in app.py).
+                    # Lives OUTSIDE the Loading wrapper so the spinner
+                    # only covers the plot, not the drag handle.
                     html.Div(
                         id="plot-h-divider",
                         className="ui-plot-h-divider",
@@ -228,29 +279,37 @@ def register_callbacks(app: dash.Dash) -> None:
         prevent_initial_call=True,
     )
     def _render_plot(  # type: ignore[no-untyped-def]
-        refresh_clicks, payload, options, _theme_store, auto, plot_version,
+        refresh_clicks, payload, options, theme_store, auto, plot_version,
         grid_selected, sum_view,
     ):
         triggered = ctx.triggered_id
         is_refresh = (triggered == "opt-refresh-btn")
+        # Read theme from the dedicated `theme` Store rather than the
+        # echoed-into-plot-options copy. _aggregate echoes the theme
+        # into plot-options, but the two callbacks (_aggregate and
+        # _render_plot) fire in parallel when the user clicks the
+        # toggle — so plot-options may still hold the OLD theme when
+        # this callback runs. The theme Store itself is the single
+        # source of truth.
+        theme = str(theme_store or (options or {}).get("theme") or "light")
         # Theme toggle is a render trigger even when Auto-refresh is off:
-        # the user just clicked it and expects an immediate flip. We do
-        # NOT set force_refresh — no data re-download, just a re-render
-        # with the new Plotly template.
-        is_theme = (triggered == "theme")
-        if not is_refresh and not auto and not is_theme:
+        # the user just clicked it and expects an immediate flip. We
+        # detect it by comparing against the last-rendered theme rather
+        # than ctx.triggered_id — when the user clicks ☾, both the
+        # `theme` Store AND `plot-options` (via _aggregate echoing the
+        # theme key) update, and the trigger that lands here can be
+        # either one, depending on Store-settle order. The value-compare
+        # is unambiguous. We do NOT set force_refresh — no data
+        # re-download, just a re-render with the new Plotly template.
+        state = get_state()
+        last_theme = (state.get("last_plot") or {}).get("theme")
+        theme_changed = last_theme is not None and last_theme != theme
+        if not is_refresh and not auto and not theme_changed:
             return (no_update, no_update, no_update, no_update,
                     no_update, no_update, no_update, no_update)
-        # Theme is needed for placeholder figures even before the options
-        # dict is read.
-        theme = str((options or {}).get("theme", "light"))
         if not payload:
             return (
-                _empty_figure(
-                    "Search above, then click + Add to plot to start "
-                    "plotting.",
-                    theme=theme,
-                ),
+                _empty_figure(theme=theme),
                 no_update,
                 {},                      # single-plot visible
                 {"display": "none"},     # tabs hidden
@@ -260,7 +319,6 @@ def register_callbacks(app: dash.Dash) -> None:
                 no_update,
             )
 
-        state = get_state()
         client = state.get("client")
         if client is None:
             return (
@@ -336,9 +394,7 @@ def register_callbacks(app: dash.Dash) -> None:
                 _empty_figure(
                     "All staged cells are missing cycling data — see "
                     "warnings above."
-                    if warnings else
-                    "Search above, then click + Add to plot to start "
-                    "plotting.",
+                    if warnings else "",
                     theme=theme,
                 ),
                 no_update,

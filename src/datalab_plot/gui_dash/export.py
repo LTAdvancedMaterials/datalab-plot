@@ -129,7 +129,7 @@ def layout() -> html.Div:
                     ),
                     dbc.Col(
                         dbc.Button(
-                            "✕",
+                            "🗑",
                             id="export-delete-btn",
                             color="secondary",
                             outline=True,
@@ -261,17 +261,20 @@ def register_callbacks(app: dash.Dash) -> None:
         return _select_options()
 
     # --- Delete the selected saved plot ----------------------------------
+    # Fired by the confirm-delete modal's OK button (or directly by the
+    # 🗑 button click when the "don't show again" suppression flag is
+    # set). See confirm.py for the fork/confirm callback graph.
     @app.callback(
         Output("save-version", "data", allow_duplicate=True),
         Output("export-load-select", "value"),
         Output("export-load-feedback", "children", allow_duplicate=True),
-        Input("export-delete-btn", "n_clicks"),
+        Input("confirm-delete-trigger", "data"),
         State("export-load-select", "value"),
         State("save-version", "data"),
         prevent_initial_call=True,
     )
-    def _delete(n_clicks, stem, version):  # type: ignore[no-untyped-def]
-        if not n_clicks or not stem:
+    def _delete(trigger, stem, version):  # type: ignore[no-untyped-def]
+        if not trigger or not stem:
             return no_update, no_update, no_update
         try:
             delete_plot_config(stem)

@@ -21,6 +21,7 @@ import dash_bootstrap_components as dbc
 from dash import dcc, html
 
 from datalab_plot.gui_dash import (
+    confirm,
     connection,
     export,
     options,
@@ -210,10 +211,14 @@ strong { font-weight: 600; }
 :root {
     --ag-row-staged-bg: #e8f1ff;
     --ag-editable-cell-bg: #fff8e1;
+    /* dcc.Loading overlay tint — fully opaque so the placeholder
+       text on the underlying figure is hidden, not merely tinted. */
+    --plot-loading-bg: #ffffff;
 }
 [data-bs-theme="dark"] {
     --ag-row-staged-bg: #1e3a5c;
     --ag-editable-cell-bg: #2d2a1a;
+    --plot-loading-bg: #1a1d20;
 }
 
 /* --- Plot-mode selector: horizontal-scroll wrapper, centered ------
@@ -340,6 +345,12 @@ strong { font-weight: 600; }
     color: var(--text-muted);
     font-weight: 400;
 }
+
+/* Theme-toggle glyphs sit slightly off the optical centre (`●`
+   low, `☾` high). A previous attempt at flex + line-height: 1
+   centering collapsed the buttons' box height below the column-
+   mode group's; the asymmetry is the lesser evil, so we leave the
+   default Bootstrap .btn-sm sizing alone. */
 
 /* --- Dark mode chrome overrides ---------------------------------
    Triggered by `data-bs-theme="dark"` on <html>. The Plotly figure
@@ -485,6 +496,19 @@ def _make_app() -> dash.Dash:
             # echoes it into the plot-options Store so the plot
             # callback re-fires with the matching Plotly template.
             dcc.Store(id="theme", data="light"),
+            # Confirm-modal "don't show again" flags. localStorage-backed,
+            # so the suppression persists across page reloads. Schema:
+            # {"delete": bool, "reset": bool}.
+            dcc.Store(
+                id="suppress-confirms",
+                storage_type="local",
+                data={},
+            ),
+            # Triggers bumped by the confirm modals' OK paths (or by
+            # the fork callbacks when suppression is active). The actual
+            # destructive actions listen to these.
+            dcc.Store(id="confirm-delete-trigger", data=0),
+            dcc.Store(id="confirm-reset-trigger", data=0),
             dcc.Location(id="url", refresh=False),
             dbc.Navbar(
                 dbc.Container(
@@ -520,17 +544,15 @@ def _make_app() -> dash.Dash:
                                 dbc.ButtonGroup(
                                     [
                                         dbc.Button(
-                                            # U+25EF LARGE CIRCLE. The
-                                            # natural sun glyph U+2600
-                                            # has an emoji variant in
-                                            # most fonts and still
-                                            # renders heavyweight even
-                                            # with VS-15. A flat circle
-                                            # pairs cleanly with the
-                                            # crescent moon ☾ — both
-                                            # are line-art symbols with
-                                            # no emoji counterpart.
-                                            "◯",
+                                            # U+2B24 BLACK LARGE CIRCLE
+                                            # — solid round counterpart
+                                            # to U+25EF LARGE CIRCLE, at
+                                            # roughly the same size.
+                                            # Flat line-art glyph with
+                                            # no emoji counterpart, so
+                                            # it pairs cleanly with the
+                                            # crescent moon ☾.
+                                            "⬤",
                                             id="theme-light",
                                             color="secondary",
                                             outline=True,
@@ -548,7 +570,21 @@ def _make_app() -> dash.Dash:
                                         ),
                                     ],
                                     size="sm",
-                                    className="me-3",
+                                    className="me-2",
+                                ),
+                                dbc.Button(
+                                    "Reset",
+                                    id="reset-btn",
+                                    color="link",
+                                    size="sm",
+                                    className=(
+                                        "p-0 text-decoration-none "
+                                        "ms-2 me-3 ui-caption"
+                                    ),
+                                    title=(
+                                        "Clear staged items, search "
+                                        "results, and plot"
+                                    ),
                                 ),
                                 html.Div(connection.layout()),
                             ],
@@ -599,6 +635,10 @@ def _make_app() -> dash.Dash:
                 id="main-content",
                 className="ui-two-col",
             ),
+            # Confirm modals for destructive actions (mounted at top
+            # level so they overlay the whole page). See confirm.py.
+            confirm.delete_modal(),
+            confirm.reset_modal(),
         ],
         fluid=True,
         className="px-3",
@@ -611,11 +651,13 @@ def _make_app() -> dash.Dash:
     options.register_callbacks(app)
     plotting_panel.register_callbacks(app)
     export.register_callbacks(app)
+    confirm.register_callbacks(app)
 
     # Toggle main-content visibility based on connection state.
-    from dash import Input, Output, State
+    from dash import ALL, Input, Output, State, no_update
 
-    from datalab_plot.gui_dash.state import get_state
+    from datalab_plot.gui_dash.state import get_state, reset_ui_state
+    from datalab_plot.plot_constants import PLOT_OPTION_DEFAULTS, PRESET_OPTIONS
 
     @app.callback(
         Output("main-content", "style"),
@@ -634,6 +676,75 @@ def _make_app() -> dash.Dash:
                 ),
             )
         return {}, ""
+
+    # Navbar Reset action — wipes UI state + resets every option widget
+    # to PLOT_OPTION_DEFAULTS. Fired by the confirm-reset modal's OK
+    # path (or directly by the Reset button when the user has dismissed
+    # the modal with "Don't show again"). The destination Outputs
+    # mirror options.py:_reset_options so both flows converge on the
+    # same widget values.
+    @app.callback(
+        Output("staging-version", "data", allow_duplicate=True),
+        Output("search-version", "data", allow_duplicate=True),
+        Output("opt-preset", "data", allow_duplicate=True),
+        Output({"type": "opt-preset-btn", "value": ALL}, "active",
+               allow_duplicate=True),
+        Output("opt-mode", "value", allow_duplicate=True),
+        Output("opt-x-axis", "value", allow_duplicate=True),
+        Output("opt-y-axis", "value", allow_duplicate=True),
+        Output("opt-y2-axis", "value", allow_duplicate=True),
+        Output("opt-title", "value", allow_duplicate=True),
+        Output("opt-color-by-status", "value", allow_duplicate=True),
+        Output("opt-width-scale", "value", allow_duplicate=True),
+        Output("opt-legend-mode", "value", allow_duplicate=True),
+        Output("opt-font-size", "value", allow_duplicate=True),
+        Output("opt-colorbar", "value", allow_duplicate=True),
+        Output("opt-border", "value", allow_duplicate=True),
+        Output("opt-grid-x", "value", allow_duplicate=True),
+        Output("opt-grid-y", "value", allow_duplicate=True),
+        Output("opt-marker-mode", "value", allow_duplicate=True),
+        Output("opt-marker-size", "value", allow_duplicate=True),
+        Output("opt-xmin", "value", allow_duplicate=True),
+        Output("opt-xmax", "value", allow_duplicate=True),
+        Output("opt-ymin", "value", allow_duplicate=True),
+        Output("opt-ymax", "value", allow_duplicate=True),
+        Output("opt-y2min", "value", allow_duplicate=True),
+        Output("opt-y2max", "value", allow_duplicate=True),
+        Output("search-input", "value", allow_duplicate=True),
+        # Clear the Load-saved-plot dropdown too — otherwise re-selecting
+        # the same saved plot after Reset is a no-op (Dash skips identical
+        # values), so the user can't reload it.
+        Output("export-load-select", "value", allow_duplicate=True),
+        # Clear the "Loaded <name> · N cells" feedback span left over
+        # from the last load action.
+        Output("export-load-feedback", "children", allow_duplicate=True),
+        Input("confirm-reset-trigger", "data"),
+        State("staging-version", "data"),
+        State("search-version", "data"),
+        prevent_initial_call=True,
+    )
+    def _do_reset(trigger, sv, rv):  # type: ignore[no-untyped-def]
+        if not trigger:
+            return [no_update] * 28
+        reset_ui_state()
+        d = PLOT_OPTION_DEFAULTS
+        preset = d["ui_preset"]
+        actives = [(p == preset) for p in PRESET_OPTIONS]
+        return (
+            (sv or 0) + 1,
+            (rv or 0) + 1,
+            preset, actives,
+            d["ui_mode"], d["ui_x_axis"], d["ui_y_axis"], d["ui_y2_axis"],
+            d["ui_title"], d["ui_color_by_status"], d["ui_width_scale"],
+            d["ui_legend_mode"], d["ui_font_size"], d["ui_colorbar"],
+            d["ui_border"], d["ui_grid_x"], d["ui_grid_y"],
+            d["ui_marker_mode"], d["ui_marker_size"],
+            d["ui_xmin"], d["ui_xmax"], d["ui_ymin"], d["ui_ymax"],
+            d["ui_y2min"], d["ui_y2max"],
+            "",     # search-input
+            None,   # export-load-select
+            "",     # export-load-feedback
+        )
 
     # Divider drag (both vertical column divider and horizontal plot
     # divider). Clientside JS — bound once via window.__dividerBound.
@@ -732,13 +843,17 @@ def _make_app() -> dash.Dash:
                 const hInput = document.getElementById('opt-plot-h-px');
                 if (resizer && hInput) {
                     new ResizeObserver(() => {
-                        const cs = getComputedStyle(resizer);
-                        const px = parseFloat(
-                            cs.getPropertyValue('--plot-height')
+                        // Read the actually-rendered pixel height of
+                        // the dcc.Graph wrapper. The CSS variable may
+                        // still be an unresolved calc() expression at
+                        // first paint, which parseFloat returns NaN for.
+                        const graph = resizer.querySelector(
+                            '.ui-plot-graph'
                         );
-                        if (isFinite(px) && px > 0) {
-                            hInput.value = Math.round(px);
-                        }
+                        const px = graph
+                            ? graph.clientHeight
+                            : resizer.clientHeight;
+                        if (px > 0) hInput.value = Math.round(px);
                     }).observe(resizer);
                 }
             }
@@ -750,10 +865,12 @@ def _make_app() -> dash.Dash:
     )
 
     # --- Width input → --left-col-width on #main-content -----------------
-    # Fires on Enter (n_submit) so we don't relayout on every keystroke.
+    # Fires on every `value` change, so spinner clicks, keystrokes, and
+    # paste all live-resize. Plotly's responsive reflow is cheap and the
+    # field max-length is a few digits, so per-keystroke relayout is fine.
     app.clientside_callback(
         """
-        function(_n, px) {
+        function(px) {
             if (!px) return window.dash_clientside.no_update;
             const main = document.getElementById('main-content');
             if (!main) return window.dash_clientside.no_update;
@@ -769,15 +886,14 @@ def _make_app() -> dash.Dash:
         }
         """,
         Output("opt-plot-w-px", "n_blur"),
-        Input("opt-plot-w-px", "n_submit"),
-        State("opt-plot-w-px", "value"),
+        Input("opt-plot-w-px", "value"),
         prevent_initial_call=True,
     )
 
     # --- Height input → --plot-height on #plot-resizer -------------------
     app.clientside_callback(
         """
-        function(_n, px) {
+        function(px) {
             if (!px) return window.dash_clientside.no_update;
             const resizer = document.getElementById('plot-resizer');
             if (!resizer) return window.dash_clientside.no_update;
@@ -790,8 +906,7 @@ def _make_app() -> dash.Dash:
         }
         """,
         Output("opt-plot-h-px", "n_blur"),
-        Input("opt-plot-h-px", "n_submit"),
-        State("opt-plot-h-px", "value"),
+        Input("opt-plot-h-px", "value"),
         prevent_initial_call=True,
     )
 
@@ -874,7 +989,7 @@ def _make_app() -> dash.Dash:
     return app
 
 
-def main(port: int = 8050, open_browser: bool = True) -> None:
+def main(port: int = 8501, open_browser: bool = True) -> None:
     """Start the Dash server.
 
     ``port`` may be reassigned by the caller (``cli._find_free_port``) when

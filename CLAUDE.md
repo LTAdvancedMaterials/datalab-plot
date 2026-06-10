@@ -10,7 +10,7 @@ entirely by agents, for internal use by a small team. Keep it legible.
 routing through the datalab server. Three surfaces:
 
 - **Dash GUI** — `datalab-plot gui` (interactive browsing + plotting in a
-  browser tab on `http://localhost:8050`).
+  browser tab on `http://localhost:8501`).
 - **Python API** — `plot_cycles`, `plot_cell`, `find_cells` (matplotlib
   figures, suitable for notebooks / scripts).
 - **CLI** — `datalab-plot list | cycle | cell | nmr | xrd | uvvis` (one-shot
@@ -225,6 +225,17 @@ Two layers:
   Plotly drops its UI state. The current `plotting_panel.py` mounts
   `dcc.Graph(id="main-plot")` once in `layout()` and outputs to
   `main-plot.figure`. Don't refactor away from this.
+
+- **`dcc.Loading` only with `overlay_style` + `target_components`.**
+  The default mode swaps `children` out for the spinner, which would
+  unmount the Graph (collapsing the height + dropping uirevision).
+  The v2 overlay API in `plotting_panel.py` uses
+  `overlay_style={"visibility": "visible", ...}` so the Graph stays
+  mounted and a translucent overlay layers on top. `target_components=
+  {"main-plot": "figure", "tabs-plot-container": "children"}` makes
+  the spinner fire only when the plot callback's specific Outputs are
+  being computed — not on every unrelated callback. `delay_show=200`
+  suppresses flicker on styling-only re-renders.
 
 - **`uirevision` is keyed on `mode|x|y|y2|cycle`** in `_ui_revision()`. Same
   revision → zoom preserved across styling changes; different revision
@@ -522,7 +533,7 @@ src tests`, `uv run mypy`, `uv run pytest`.
 Run the app / CLI:
 
 ```sh
-datalab-plot gui            # Dash GUI at http://localhost:8050
+datalab-plot gui            # Dash GUI at http://localhost:8501
 datalab-plot gui --no-browser --port 8060
 datalab-plot --help         # one-shot CLI commands
 ```
@@ -542,9 +553,9 @@ GUI edits:
    confirm Dash boots and the callback graph serialises cleanly:
    ```sh
    datalab-plot gui --no-browser
-   curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8050/
-   curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8050/_dash-layout
-   curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8050/_dash-dependencies
+   curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8501/
+   curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8501/_dash-layout
+   curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8501/_dash-dependencies
    ```
    All three should return `200`. If `_dash-dependencies` fails, you have
    a broken callback registration (e.g. an Output id that doesn't exist

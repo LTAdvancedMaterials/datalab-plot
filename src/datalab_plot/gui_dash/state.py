@@ -62,3 +62,21 @@ def clear_state() -> None:
         return
     with _LOCK:
         _STORES.pop(sid, None)
+
+
+def reset_ui_state() -> None:
+    """Wipe interactive UI state for the current session.
+
+    Keeps ``client``, ``raw_data``, and ``cathode_masses`` so re-staging
+    the same cells doesn't re-fetch. Heavier wipes live in
+    ``clear_state`` (sign-out) and ``connection.py``'s "Forget cached
+    data" (raw_data + on-disk cache).
+    """
+    state = get_state()
+    state["staged_items"] = []
+    state["results"] = None
+    state["picker_initial"] = None
+    state.pop("last_fig", None)
+    state.pop("last_plot", None)
+    state.pop("last_cycle_summaries", None)
+    state.pop("broken_items", None)

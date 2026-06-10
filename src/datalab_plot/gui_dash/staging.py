@@ -207,7 +207,12 @@ def layout() -> html.Div:
             # the section header is the single show/hide control.
             dbc.Collapse(
                 [
-                    # Apply-to-selection toolbar (targets staged-grid selection)
+                    # Apply-to-selection toolbar (targets staged-grid
+                    # selection). The Group / Color / Label input cluster
+                    # lives in an inner Div whose `display: none` toggles
+                    # off when no rows are selected — see
+                    # `_selection_state`. Only the prompt text stays
+                    # visible in that case.
                     html.Div(
                         dbc.Row(
                             [
@@ -220,25 +225,37 @@ def layout() -> html.Div:
                                     className="d-flex align-items-center pe-2",
                                 ),
                                 dbc.Col(
-                                    _apply_field(
-                                        "Group", "staged-apply-group-input",
-                                        "staged-apply-group-btn",
+                                    html.Div(
+                                        [
+                                            html.Div(
+                                                _apply_field(
+                                                    "Group",
+                                                    "staged-apply-group-input",
+                                                    "staged-apply-group-btn",
+                                                ),
+                                            ),
+                                            html.Div(
+                                                _apply_field(
+                                                    "Color",
+                                                    "staged-apply-color-input",
+                                                    "staged-apply-color-btn",
+                                                ),
+                                            ),
+                                            html.Div(
+                                                _apply_field(
+                                                    "Label",
+                                                    "staged-apply-label-input",
+                                                    "staged-apply-label-btn",
+                                                ),
+                                            ),
+                                        ],
+                                        id="staged-apply-fields",
+                                        className=(
+                                            "d-flex gap-2 flex-wrap "
+                                            "align-items-center"
+                                        ),
                                     ),
-                                    width="auto",
-                                ),
-                                dbc.Col(
-                                    _apply_field(
-                                        "Color", "staged-apply-color-input",
-                                        "staged-apply-color-btn",
-                                    ),
-                                    width="auto",
-                                ),
-                                dbc.Col(
-                                    _apply_field(
-                                        "Label", "staged-apply-label-input",
-                                        "staged-apply-label-btn",
-                                    ),
-                                    width="auto",
+                                    width=True,
                                 ),
                             ],
                             className="g-2 align-items-center flex-wrap",
@@ -258,6 +275,14 @@ def layout() -> html.Div:
                                     "headerCheckbox": True,
                                     "enableClickSelection": True,
                                     "enableSelectionWithoutKeys": False,
+                                },
+                                # Pin the auto-injected selection column
+                                # to the very left, ahead of pinned-left
+                                # user columns.
+                                "selectionColumnDef": {
+                                    "pinned": "left",
+                                    "width": 40,
+                                    "suppressMovable": True,
                                 },
                                 "animateRows": False,
                                 "stopEditingWhenCellsLoseFocus": True,
@@ -298,8 +323,11 @@ def register_callbacks(app: dash.Dash) -> None:
         return staged, payload, counts
 
     # --- Update apply-toolbar prompt + Remove-btn disabled on selection --
+    # Also toggles `staged-apply-fields.style` so the Group / Color /
+    # Label inputs only appear when there's a selection to act on.
     @app.callback(
         Output("staged-apply-prompt", "children"),
+        Output("staged-apply-fields", "style"),
         Output("staged-apply-group-btn", "disabled"),
         Output("staged-apply-color-btn", "disabled"),
         Output("staged-apply-label-btn", "disabled"),
@@ -316,7 +344,8 @@ def register_callbacks(app: dash.Dash) -> None:
         else:
             prompt = f"Apply to {n} staged rows:"
         disabled = n == 0
-        return prompt, disabled, disabled, disabled, disabled
+        fields_style = {"display": "none"} if n == 0 else {}
+        return prompt, fields_style, disabled, disabled, disabled, disabled
 
     # --- Apply group / color / label to selected staged rows -------------
     @app.callback(
