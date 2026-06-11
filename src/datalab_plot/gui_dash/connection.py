@@ -25,6 +25,7 @@ Callback summary:
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import dash
@@ -42,6 +43,7 @@ from datalab_plot.credentials import (
     set_auto_connect,
 )
 from datalab_plot.gui_dash.state import clear_state, get_state
+from datalab_plot.local_source import connect_local
 from datalab_plot.plot_constants import _ENV_KEY, _ENV_URL, DEFAULT_URL
 
 logger = logging.getLogger(__name__)
@@ -158,6 +160,28 @@ def _cache_stats() -> str:
     return " · ".join(parts)
 
 
+def _local_stats(client) -> str:  # type: ignore[no-untyped-def]
+    """Header line for the local-folder dropdown.
+
+    Format: ``'14 cycling files · /data/cells · 18 MB parsed in memory'``.
+    """
+    try:
+        n_files = len(client.list_files())
+    except Exception:
+        n_files = 0
+    parts = [f"{n_files} cycling files", str(client.root)]
+    raw_data: dict = get_state().get("raw_data") or {}
+    in_mem = 0
+    for df in raw_data.values():
+        try:
+            in_mem += int(df.memory_usage(deep=True).sum())
+        except Exception:
+            pass
+    if in_mem > 0:
+        parts.append(f"{_human_size(in_mem)} parsed in memory")
+    return " · ".join(parts)
+
+
 def _format_autoconnect_msg(source: str, server_msg: str) -> str:
     where = {
         "saved": (
@@ -197,6 +221,38 @@ def _connect_modal() -> dbc.Modal:
                         type="password",
                         value=auto_key,
                         placeholder="paste your datalab API key",
+                        size="sm",
+                        className="mb-2",
+                    ),
+                    html.Hr(className="mb-2"),
+                    html.Div(
+                        "— or open a local folder of cycler files —",
+                        className="ui-caption mb-2",
+                    ),
+                    dbc.Label(
+                        "Folder path",
+                        html_for="conn-local-path",
+                        className="ui-field-label",
+                    ),
+                    dbc.InputGroup(
+                        [
+                            dbc.Input(
+                                id="conn-local-path",
+                                type="text",
+                                value=os.environ.get(
+                                    "DATALAB_PLOT_LOCAL_DIR", ""
+                                ),
+                                placeholder="/path/to/cycling/data",
+                                size="sm",
+                            ),
+                            dbc.Button(
+                                "Open folder",
+                                id="conn-local-btn",
+                                color="primary",
+                                outline=True,
+                                size="sm",
+                            ),
+                        ],
                         size="sm",
                         className="mb-2",
                     ),
@@ -300,41 +356,43 @@ def register_callbacks(app: dash.Dash) -> None:
                 autoconn_msg,
             )
         server_name = state.get("server_name", "connected")
-        has_saved_key = bool(saved_key_for(client.client.datalab_api_url))
+        is_local = getattr(client, "is_local", False)
+        # All dropdown-item ids must stay mounted in BOTH modes — they're
+        # callback Inputs, and a Dash callback can't fire if any Input is
+        # missing from the layout. Local mode hides the datalab-only
+        # actions instead of dropping them.
+        has_saved_key = (not is_local) and bool(
+            saved_key_for(client.client.datalab_api_url)
+        )
+        _hidden = {"display": "none"}
         items = [
-            dbc.DropdownMenuItem(_cache_stats(), header=True),
+            dbc.DropdownMenuItem(
+                _local_stats(client) if is_local else _cache_stats(),
+                header=True,
+            ),
             dbc.DropdownMenuItem(divider=True),
             dbc.DropdownMenuItem(
                 "Forget cached data",
                 id="conn-forget-data-btn",
                 n_clicks=0,
+                # Hidden in local mode: there is no per-item download
+                # cache, and the rmtree behind this action must never
+                # run anywhere near a user's data folder.
+                style=_hidden if is_local else None,
             ),
-        ]
-        if has_saved_key:
-            items.append(
-                dbc.DropdownMenuItem(
-                    "Forget saved key",
-                    id="conn-forget-key-btn",
-                    n_clicks=0,
-                )
-            )
-        else:
-            items.append(
-                dbc.DropdownMenuItem(
-                    "Forget saved key",
-                    id="conn-forget-key-btn",
-                    n_clicks=0,
-                    style={"display": "none"},
-                )
-            )
-        items.append(dbc.DropdownMenuItem(divider=True))
-        items.append(
             dbc.DropdownMenuItem(
-                "Sign out",
+                "Forget saved key",
+                id="conn-forget-key-btn",
+                n_clicks=0,
+                style=None if has_saved_key else _hidden,
+            ),
+            dbc.DropdownMenuItem(divider=True),
+            dbc.DropdownMenuItem(
+                "Close folder" if is_local else "Sign out",
                 id="conn-signout-btn",
                 n_clicks=0,
-            )
-        )
+            ),
+        ]
         return (
             dbc.DropdownMenu(
                 items,
@@ -396,7 +454,31 @@ def register_callbacks(app: dash.Dash) -> None:
             return no_update, f"Connection failed: {msg}"
         return (version or 0) + 1, ""
 
-    # --- Sign out --------------------------------------------------------
+    # --- Open a local folder (modal's second path) -------------------------
+    @app.callback(
+        Output("connection-version", "data", allow_duplicate=True),
+        Output("conn-error", "children", allow_duplicate=True),
+        Input("conn-local-btn", "n_clicks"),
+        State("conn-local-path", "value"),
+        State("connection-version", "data"),
+        prevent_initial_call=True,
+    )
+    def _on_open_local_click(n_clicks, path, version):  # type: ignore[no-untyped-def]
+        if not n_clicks:
+            return no_update, no_update
+        state = get_state()
+        try:
+            source = connect_local(path or "")
+        except (ValueError, NotADirectoryError) as exc:
+            return no_update, str(exc)
+        state.pop("auto_connect_failed", None)
+        state.pop("auto_connect_source", None)
+        state.pop("signed_out", None)
+        state["client"] = source
+        state["server_name"] = source.root.name
+        return (version or 0) + 1, ""
+
+    # --- Sign out / Close folder ------------------------------------------
     @app.callback(
         Output("connection-version", "data", allow_duplicate=True),
         Input("conn-signout-btn", "n_clicks"),
@@ -469,7 +551,9 @@ def register_callbacks(app: dash.Dash) -> None:
             return no_update
         state = get_state()
         client = state.get("client")
-        if client is None:
+        # Local sources have no datalab key (button is hidden, but guard
+        # anyway — clicking it would crash on the missing .client).
+        if client is None or getattr(client, "is_local", False):
             return no_update
         forget_cred(client.client.datalab_api_url)
         return (version or 0) + 1

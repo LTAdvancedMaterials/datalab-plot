@@ -41,6 +41,15 @@ class DatalabPlotClient:
     def close(self) -> None:
         self.client.__exit__(None, None, None)
 
+    def get_item(self, item_id: str) -> dict:
+        """Fetch the full item document for ``item_id``.
+
+        Thin wrapper so the plot pipeline can treat this client and
+        :class:`datalab_plot.local_source.LocalFolderSource` uniformly
+        (both satisfy the ``DataSource`` protocol).
+        """
+        return self.client.get_item(item_id=item_id)
+
     def fetch_files(
         self,
         item_id: str,

@@ -227,8 +227,17 @@ def register_callbacks(app: dash.Dash) -> None:
         state = get_state()
         client = state.get("client")
         staged_items = list(state.get("staged_items") or [])
+        # Record where the staged items came from. For a local-folder
+        # source there's no datalab URL — store "local:<root>" so a
+        # reload against the same folder resolves the relative-path ids.
+        if client is None:
+            source_url = ""
+        elif getattr(client, "is_local", False):
+            source_url = f"local:{client.root}"
+        else:
+            source_url = client.client.datalab_api_url
         config: dict[str, Any] = {
-            "datalab_url": client.client.datalab_api_url if client else "",
+            "datalab_url": source_url,
             "staged_items": staged_items,
             "preset": preset,
             "options": options or {},

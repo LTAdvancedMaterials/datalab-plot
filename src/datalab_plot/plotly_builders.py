@@ -18,7 +18,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from datalab_plot.client import DatalabPlotClient
+from datalab_plot.local_source import DataSource
 from datalab_plot.parsers.echem import (
     cycle_summary,
     detect_status_column,
@@ -746,7 +746,7 @@ def _masses_keyed_by_label(
 
 
 def _ensure_data_for(
-    client: DatalabPlotClient,
+    client: DataSource,
     item_ids: list[str],
     *,
     force: bool,
@@ -755,6 +755,8 @@ def _ensure_data_for(
 ) -> tuple[int, int, list[str], dict[str, str]]:
     """Make sure parsed echem data is loaded for each ``item_id``.
 
+    ``client`` is any ``DataSource`` — a datalab-backed
+    ``DatalabPlotClient`` or a folder-backed ``LocalFolderSource``.
     Mutates ``raw_data`` and ``cathode_masses`` in place. Returns
     ``(cache_hits, cache_misses, skipped, errors)`` where:
       - ``skipped`` lists item_ids that have no cycling files attached.
@@ -772,7 +774,7 @@ def _ensure_data_for(
         if force:
             client.purge(iid)
         try:
-            item_dict = client.client.get_item(item_id=iid)
+            item_dict = client.get_item(iid)
             mass_mg = extract_cathode_mass_mg(item_dict)
             cathode_masses[iid] = mass_mg / 1000.0 if mass_mg is not None else None
             results = client.fetch_files_verbose(
@@ -859,7 +861,7 @@ class FigureResult:
 
 
 def build_figure_for_payload(
-    client: DatalabPlotClient,
+    client: DataSource,
     payload: dict[str, dict[str, Any]],
     mode: str,
     cycle: int | None,

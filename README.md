@@ -152,6 +152,25 @@ Typical flow:
 If a cell's file can't be parsed (e.g. malformed cycler export), that
 row is auto-deselected and an error banner explains why.
 
+### Plotting local files (no datalab needed)
+
+The Connect modal has a second path: enter a folder path under
+**"— or open a local folder of cycler files —"** and click *Open
+folder*. The app recursively lists every cycler export it finds
+(Biologic `.mpr`, Neware `.nda`/`.ndax`, Arbin `.res`, `.xls`/`.xlsx`,
+`.csv`, `.txt`) — one file per row — and the rest of the workflow is
+identical: filter by filename in the search box, stage, and plot. Your
+data files are read in place and never modified, copied, or deleted.
+Set `DATALAB_PLOT_LOCAL_DIR` to pre-fill the folder path. Notes:
+
+- A session is either datalab **or** a local folder — *Close folder*
+  (in the navbar dropdown) to switch.
+- Bare files carry no cell metadata, so the electrode / mass columns
+  are empty and *specific capacity* is unavailable (the plot warns
+  "no cathode mass recorded").
+- *Re-fetch* re-parses the files from disk — useful while a cycler is
+  still appending data to an export.
+
 ## Python API
 
 ### Discovery

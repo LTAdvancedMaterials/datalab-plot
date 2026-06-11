@@ -53,6 +53,7 @@ series.py   DataFrames → render-agnostic plot series (NamedTuples)
 | Module | Purpose | Touch-it? |
 |---|---|---|
 | [src/datalab_plot/client.py](src/datalab_plot/client.py) | `DatalabPlotClient` — datalab API wrapper with on-disk file cache. | Yes |
+| [src/datalab_plot/local_source.py](src/datalab_plot/local_source.py) | `LocalFolderSource` — folder-backed `DataSource` (plot local cycler files without datalab) + the `DataSource` Protocol. **Pure.** | Yes — see "Local-folder mode" below |
 | [src/datalab_plot/search.py](src/datalab_plot/search.py) | `find_cells`, `extract_cathode_mass_mg`. | Yes |
 | [src/datalab_plot/cache.py](src/datalab_plot/cache.py) | `cache_dir()` — resolves `$DATALAB_PLOT_CACHE` / cwd / platformdirs. | Rarely |
 | [src/datalab_plot/credentials.py](src/datalab_plot/credentials.py) | Pure load/save/forget of API keys + the `connect()` helper. | Yes |
@@ -181,6 +182,34 @@ resize event makes the figure recompute when either divider moves.
 | `[◯] [☾]` button group | Toggles `data-bs-theme="dark"` on `<html>` AND writes `dcc.Store(id="theme")`. On first load, the theme matches the OS preference via `prefers-color-scheme` — the same clientside callback fires with `triggered_id=null` on initial layout and reads `window.matchMedia('(prefers-color-scheme: dark)')`. Manual clicks override for the session; refreshing re-applies the OS preference. Glyphs are flat line-art (U+25EF LARGE CIRCLE, U+263E LAST QUARTER MOON) — both monochrome with no emoji counterpart, so they pair visually. The toggle flips: page chrome (`[data-bs-theme="dark"]` CSS overrides), both AG Grids' className (`ag-theme-alpine` ↔ `ag-theme-alpine-dark`), the Plotly figure template (`plotly_white` ↔ `plotly_dark`), the staged-row tint (`--ag-row-staged-bg`) and editable-cell tint (`--ag-editable-cell-bg`). The plot re-renders on theme change even when Auto-refresh is off — `_render_plot` has `Input("theme", "data")` and treats it as a render trigger (without `force_refresh`). |
 | `✓ ServerName ▾` dropdown (when connected) | Cache stats header + Forget cached data / Forget saved key / Sign out. |
 | `Connect` button (when disconnected) | Opens the credentials modal. |
+
+### Local-folder mode
+
+The Connect modal has a second path: "open a local folder" puts a
+`LocalFolderSource` ([local_source.py](src/datalab_plot/local_source.py))
+into `state["client"]` instead of a `DatalabPlotClient`. A session is
+**exclusively** one source or the other (switch = sign out first).
+
+- Both classes satisfy the `DataSource` Protocol (`get_item` /
+  `fetch_files_verbose` / `purge`) consumed by
+  `plotly_builders._ensure_data_for` — the entire plot pipeline is
+  source-agnostic from there down. One file = one item; `item_id` is
+  the file's root-relative posix path.
+- GUI branches dispatch on `getattr(client, "is_local", False)`:
+  search lists/filters filenames via `source.list_files(query)`
+  instead of `find_cells`; the connected dropdown shows a file-count
+  header, hides "Forget cached data" / "Forget saved key" (kept
+  mounted with `display:none` — they're callback Inputs), and
+  relabels Sign out as "Close folder".
+- **SAFETY INVARIANT: a local source must NEVER modify or delete the
+  user's data files.** `LocalFolderSource.purge` is a hard no-op and
+  `cache_root` points at the app cache dir, never the data folder —
+  so rmtree-style cache logic can't reach user data. Don't change
+  either property.
+- Local items have no metadata: `get_item` returns `{}` → cathode
+  mass stays `None` → specific capacity shows the existing
+  "no cathode mass recorded" warning. Saved plot configs record
+  `"datalab_url": "local:<root>"`.
 
 ### State management
 

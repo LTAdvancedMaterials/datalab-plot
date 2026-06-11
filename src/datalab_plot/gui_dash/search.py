@@ -108,18 +108,27 @@ def register_callbacks(app: dash.Dash) -> None:
         if state.get("results") is not None:
             # Already populated this session.
             return no_update, no_update, no_update
+        is_local = getattr(client, "is_local", False)
         try:
-            df = find_cells(
-                item_type=("samples", "cells"),
-                limit=_AUTOPOPULATE_COUNT,
-                client=client,
-            )
+            if is_local:
+                # Folder listing is cheap (and capped) — show everything.
+                df = client.list_files()
+            else:
+                df = find_cells(
+                    item_type=("samples", "cells"),
+                    limit=_AUTOPOPULATE_COUNT,
+                    client=client,
+                )
         except Exception as exc:
             logger.warning("Auto-populate failed", exc_info=True)
             state["results"] = pd.DataFrame()
             return no_update, no_update, f"Auto-populate failed: {exc}"
         state["results"] = df
-        summary = f"Showing the {len(df)} most recent items — search above to load others."
+        summary = (
+            f"{len(df)} cycling files in {client.root} — search above to filter."
+            if is_local
+            else f"Showing the {len(df)} most recent items — search above to load others."
+        )
         state["picker_initial"] = _build_initial_df(df, None).reset_index(drop=True)
         state.pop("picker_last_edited", None)
         return (search_version or 0) + 1, summary, ""
@@ -145,20 +154,25 @@ def register_callbacks(app: dash.Dash) -> None:
         client = state.get("client")
         if client is None:
             return no_update, no_update, no_update, no_update
+        is_local = getattr(client, "is_local", False)
         try:
-            df = find_cells(
-                query=(query or None),
-                item_type=("samples", "cells"),
-                limit=300,
-                client=client,
-            )
+            if is_local:
+                df = client.list_files(query)
+            else:
+                df = find_cells(
+                    query=(query or None),
+                    item_type=("samples", "cells"),
+                    limit=300,
+                    client=client,
+                )
         except Exception as exc:
             logger.warning("Search failed", exc_info=True)
             return no_update, no_update, f"Search failed: {exc}", no_update
+        noun = "file(s)" if is_local else "result(s)"
         summary = (
-            f"{len(df)} result(s) for “{query}”"
+            f"{len(df)} {noun} for “{query}”"
             if query
-            else f"Showing all {len(df)} items"
+            else f"Showing all {len(df)} {'files' if is_local else 'items'}"
         )
         prior = _current_picker_df_from_state()
         state["results"] = df
