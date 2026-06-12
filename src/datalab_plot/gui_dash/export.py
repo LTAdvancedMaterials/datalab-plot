@@ -30,6 +30,7 @@ from datalab_plot.gui_dash.plot_io import (
     list_plot_configs,
     load_plot_config,
     save_plot_config,
+    source_hint,
 )
 from datalab_plot.gui_dash.plotting_panel import _style_from_dict
 from datalab_plot.gui_dash.state import get_state
@@ -153,12 +154,33 @@ def layout() -> html.Div:
 
 # Helpers ---------------------------------------------------------------
 
+def _session_source() -> str:
+    """The current session's source identifier, matching what `_save`
+    writes into a config's ``datalab_url`` field: a server URL,
+    ``"local:<root>"``, or ``""`` when disconnected."""
+    client = get_state().get("client")
+    if client is None:
+        return ""
+    if getattr(client, "is_local", False):
+        return f"local:{client.root}"
+    return client.client.datalab_api_url
+
+
 def _select_options() -> list[dict[str, str]]:
-    """Return the options list for the Load Select, sorted newest-first."""
-    return [
-        {"label": f"{e['name']} · {e['n_items']} cells", "value": e["stem"]}
-        for e in list_plot_configs()
-    ]
+    """Return the options list for the Load Select, sorted newest-first.
+
+    Labels carry a short source hint (📁 folder-name or server host) so
+    configs saved against a different source are recognisable before
+    loading. Old configs without a recorded source get no suffix.
+    """
+    options = []
+    for e in list_plot_configs():
+        label = f"{e['name']} · {e['n_items']} cells"
+        hint = source_hint(e.get("source", ""))
+        if hint:
+            label += f" · {hint}"
+        options.append({"label": label, "value": e["stem"]})
+    return options
 
 
 def register_callbacks(app: dash.Dash) -> None:
@@ -225,19 +247,11 @@ def register_callbacks(app: dash.Dash) -> None:
         if not n_clicks or not (name and name.strip()):
             return no_update, no_update, no_update
         state = get_state()
-        client = state.get("client")
         staged_items = list(state.get("staged_items") or [])
-        # Record where the staged items came from. For a local-folder
-        # source there's no datalab URL — store "local:<root>" so a
-        # reload against the same folder resolves the relative-path ids.
-        if client is None:
-            source_url = ""
-        elif getattr(client, "is_local", False):
-            source_url = f"local:{client.root}"
-        else:
-            source_url = client.client.datalab_api_url
+        # Record where the staged items came from ("local:<root>" for a
+        # folder source) so a reload can flag source mismatches.
         config: dict[str, Any] = {
-            "datalab_url": source_url,
+            "datalab_url": _session_source(),
             "staged_items": staged_items,
             "preset": preset,
             "options": options or {},
@@ -388,6 +402,25 @@ def register_callbacks(app: dash.Dash) -> None:
         def lim_str(v: Any) -> str:
             return "" if v is None else str(v)
 
+        # Source-mismatch check: a config saved against a different
+        # datalab / folder still loads (options + labels are useful as a
+        # template) but its item ids likely won't resolve here — warn.
+        # Configs without a recorded source (pre-feature) never warn.
+        cfg_source = cfg.get("datalab_url") or ""
+        cur_source = _session_source()
+        if cfg_source and cur_source and cfg_source != cur_source:
+            hint = source_hint(cfg_source) or cfg_source
+            feedback = html.Span(
+                f"Loaded {cfg.get('name', stem)} · saved from {hint} — "
+                "staged items may not resolve in the current session",
+                className="ui-feedback-warning",
+            )
+        else:
+            feedback = html.Span(
+                f"Loaded {cfg.get('name', stem)} · {len(staged)} cells",
+                className="ui-feedback-success",
+            )
+
         return (
             (staging_version or 0) + 1,
             preset, actives,
@@ -412,8 +445,5 @@ def register_callbacks(app: dash.Dash) -> None:
             lim_str(style.get("y_max")),
             lim_str(style.get("y2_min")),
             lim_str(style.get("y2_max")),
-            html.Span(
-                f"Loaded {cfg.get('name', stem)} · {len(staged)} cells",
-                className="ui-feedback-success",
-            ),
+            feedback,
         )

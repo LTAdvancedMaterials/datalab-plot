@@ -72,7 +72,10 @@ def list_plot_configs() -> list[dict[str, Any]]:
     """Return summary metadata for every saved config, newest first.
 
     Each entry: ``{"stem": str, "name": str, "saved_at": str,
-    "n_items": int}``. Corrupt files are silently skipped.
+    "n_items": int, "source": str}`` where ``source`` is the config's
+    ``datalab_url`` field (a server URL, ``"local:<root>"``, or ``""``
+    for configs from before sources were recorded). Corrupt files are
+    silently skipped.
     """
     out: list[dict[str, Any]] = []
     for path in _configs_dir().glob("*.json"):
@@ -88,9 +91,30 @@ def list_plot_configs() -> list[dict[str, Any]]:
             "name": data.get("name") or path.stem,
             "saved_at": data.get("saved_at") or "",
             "n_items": len(items) if isinstance(items, list) else 0,
+            "source": data.get("datalab_url") or "",
         })
     out.sort(key=lambda e: e.get("saved_at", ""), reverse=True)
     return out
+
+
+def source_hint(source_url: str) -> str:
+    """Short human label for a config's source.
+
+    ``"local:<root>"`` → ``"📁 <folder-name>"``; an http(s) URL → its
+    hostname; empty/unrecognised → ``""``.
+    """
+    s = (source_url or "").strip()
+    if not s:
+        return ""
+    if s.startswith("local:"):
+        name = Path(s[len("local:"):]).name
+        return f"📁 {name}" if name else "📁 local"
+    if s.startswith(("http://", "https://")):
+        from urllib.parse import urlparse
+
+        host = urlparse(s).hostname or ""
+        return host
+    return ""
 
 
 def delete_plot_config(name_or_stem: str) -> None:

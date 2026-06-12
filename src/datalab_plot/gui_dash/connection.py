@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import dash
@@ -39,6 +41,7 @@ from datalab_plot.credentials import (
     load_creds,
     normalize_url,
     save_cred,
+    save_local_dir,
     saved_key_for,
     set_auto_connect,
 )
@@ -160,6 +163,90 @@ def _cache_stats() -> str:
     return " · ".join(parts)
 
 
+def _pick_folder_macos() -> str | None:
+    """macOS folder picker via ``osascript`` (always present).
+
+    Preferred over tkinter on darwin: uv-managed python-build-standalone
+    interpreters bundle tkinter but ship a broken Tcl runtime path, so
+    ``tk.Tk()`` raises TclError even though ``import tkinter`` works.
+    """
+    try:
+        out = subprocess.run(
+            [
+                "osascript",
+                "-e",
+                'POSIX path of (choose folder with prompt '
+                '"Choose a folder of cycler files")',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,  # generous — the dialog waits on the user
+        )
+    except Exception:
+        logger.warning("osascript folder dialog failed", exc_info=True)
+        return None
+    if out.returncode != 0:
+        # AppleScript error -128 = user pressed Cancel — not a failure.
+        err = (out.stderr or "").lower()
+        if "-128" in err or "canceled" in err or "cancelled" in err:
+            return ""
+        logger.warning("osascript folder dialog error: %s", err.strip()[:200])
+        return None
+    return out.stdout.strip()
+
+
+def _pick_folder_tkinter() -> str | None:
+    """Fallback folder picker via a tkinter SUBPROCESS (Windows/Linux).
+
+    Never call tkinter on a Flask worker thread — on macOS creating an
+    NSWindow off the main thread crashes the process, and other
+    platforms have their own threading constraints.
+    """
+    script = (
+        "import tkinter as tk\n"
+        "from tkinter import filedialog\n"
+        "r = tk.Tk(); r.withdraw(); r.wm_attributes('-topmost', 1)\n"
+        "print(filedialog.askdirectory() or '')\n"
+    )
+    try:
+        out = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except Exception:
+        logger.warning("Folder dialog subprocess failed", exc_info=True)
+        return None
+    if out.returncode != 0:
+        logger.warning(
+            "Folder dialog unavailable: %s", (out.stderr or "").strip()[:200]
+        )
+        return None
+    return out.stdout.strip()
+
+
+def _pick_folder_native() -> str | None:
+    """Open a native folder picker and return the chosen path.
+
+    Returns ``""`` if the user cancelled and ``None`` if no dialog could
+    be shown (no display, missing toolkit, timeout).
+    """
+    if sys.platform == "darwin":
+        return _pick_folder_macos()
+    return _pick_folder_tkinter()
+
+
+def _local_dir_prefill() -> str:
+    """Initial value for the Local-folder path input.
+
+    Last successfully opened folder beats the env var.
+    """
+    return load_creds()["last_local_dir"] or os.environ.get(
+        "DATALAB_PLOT_LOCAL_DIR", ""
+    )
+
+
 def _local_stats(client) -> str:  # type: ignore[no-untyped-def]
     """Header line for the local-folder dropdown.
 
@@ -198,83 +285,151 @@ def _format_autoconnect_msg(source: str, server_msg: str) -> str:
 
 
 def _connect_modal() -> dbc.Modal:
-    """The Connect modal, populated with the auto-resolved URL / saved key."""
+    """The Connect modal: a segmented source selector, one pane each,
+    one submit each.
+
+    Datalab server and Local folder are mutually exclusive connection
+    methods. A connected ButtonGroup (the app's house segmented-control
+    pattern — dbc.Tabs rendered full-width-stacked inside the modal)
+    switches between two always-mounted panes, each carrying its own
+    solid-primary submit — exactly one primary action visible at a
+    time. The footer carries only Cancel. Both panes stay mounted
+    (style-toggled), so every input/button remains a valid callback
+    Input regardless of the visible pane.
+    """
     target_url, auto_key, _src = _resolve_autoconnect_target()
     return dbc.Modal(
         [
-            dbc.ModalHeader(dbc.ModalTitle("Connect to datalab")),
+            dbc.ModalHeader(dbc.ModalTitle("Connect to data")),
             dbc.ModalBody(
                 [
                     html.Div(id="conn-modal-autoconn-msg", className="mb-2"),
-                    dbc.Label("Datalab URL", html_for="conn-url", className="ui-field-label"),
-                    dbc.Input(
-                        id="conn-url",
-                        type="text",
-                        value=target_url,
-                        placeholder="https://datalab.example.com/",
-                        size="sm",
-                        className="mb-2",
-                    ),
-                    dbc.Label("API key", html_for="conn-key", className="ui-field-label"),
-                    dbc.Input(
-                        id="conn-key",
-                        type="password",
-                        value=auto_key,
-                        placeholder="paste your datalab API key",
-                        size="sm",
-                        className="mb-2",
-                    ),
-                    html.Hr(className="mb-2"),
+                    # Source selector — segmented control, datalab default.
                     html.Div(
-                        "— or open a local folder of cycler files —",
-                        className="ui-caption mb-2",
-                    ),
-                    dbc.Label(
-                        "Folder path",
-                        html_for="conn-local-path",
-                        className="ui-field-label",
-                    ),
-                    dbc.InputGroup(
-                        [
-                            dbc.Input(
-                                id="conn-local-path",
-                                type="text",
-                                value=os.environ.get(
-                                    "DATALAB_PLOT_LOCAL_DIR", ""
+                        dbc.ButtonGroup(
+                            [
+                                dbc.Button(
+                                    "Datalab server",
+                                    id="conn-mode-datalab",
+                                    color="secondary",
+                                    outline=True,
+                                    size="sm",
+                                    active=True,
                                 ),
-                                placeholder="/path/to/cycling/data",
-                                size="sm",
+                                dbc.Button(
+                                    "Local folder",
+                                    id="conn-mode-local",
+                                    color="secondary",
+                                    outline=True,
+                                    size="sm",
+                                ),
+                            ],
+                            size="sm",
+                        ),
+                        className="mb-3",
+                    ),
+                    # Pane: datalab server (visible by default).
+                    html.Div(
+                        [
+                            dbc.Label(
+                                "Datalab URL",
+                                html_for="conn-url",
+                                className="ui-field-label",
                             ),
-                            dbc.Button(
-                                "Open folder",
-                                id="conn-local-btn",
-                                color="primary",
-                                outline=True,
+                            dbc.Input(
+                                id="conn-url",
+                                type="text",
+                                value=target_url,
+                                placeholder="https://datalab.example.com/",
                                 size="sm",
+                                className="mb-2",
+                            ),
+                            dbc.Label(
+                                "API key",
+                                html_for="conn-key",
+                                className="ui-field-label",
+                            ),
+                            dbc.Input(
+                                id="conn-key",
+                                type="password",
+                                value=auto_key,
+                                placeholder="paste your datalab API key",
+                                size="sm",
+                                className="mb-2",
+                            ),
+                            html.Div(
+                                dbc.Button(
+                                    "Connect",
+                                    id="conn-connect-btn",
+                                    color="primary",
+                                    size="sm",
+                                ),
+                                className="d-flex justify-content-end",
                             ),
                         ],
-                        size="sm",
-                        className="mb-2",
+                        id="conn-pane-datalab",
+                    ),
+                    # Pane: local folder (hidden until selected). Plain
+                    # Div with no `.d-*` utility class, so an inline
+                    # style toggle is safe (cf. the staged-apply-fields
+                    # `.d-flex !important` lesson).
+                    html.Div(
+                        [
+                            dbc.Label(
+                                "Folder path",
+                                html_for="conn-local-path",
+                                className="ui-field-label",
+                            ),
+                            dbc.InputGroup(
+                                [
+                                    dbc.Input(
+                                        id="conn-local-path",
+                                        type="text",
+                                        value=_local_dir_prefill(),
+                                        placeholder="/path/to/cycling/data",
+                                        size="sm",
+                                    ),
+                                    dbc.Button(
+                                        "Browse…",
+                                        id="conn-local-browse-btn",
+                                        color="secondary",
+                                        outline=True,
+                                        size="sm",
+                                    ),
+                                ],
+                                size="sm",
+                                className="mb-2",
+                            ),
+                            html.Div(
+                                "All cycler exports in the folder "
+                                "(recursively) are listed — .mpr, "
+                                ".nda/.ndax, .res, .xls(x), .csv, .txt.",
+                                className="ui-caption mb-2",
+                            ),
+                            html.Div(
+                                dbc.Button(
+                                    "Open folder",
+                                    id="conn-local-btn",
+                                    color="primary",
+                                    size="sm",
+                                ),
+                                className="d-flex justify-content-end",
+                            ),
+                        ],
+                        id="conn-pane-local",
+                        style={"display": "none"},
                     ),
                     html.Div(id="conn-error", className="ui-feedback ui-feedback-danger"),
                 ]
             ),
             dbc.ModalFooter(
-                [
-                    dbc.Button(
-                        "Cancel",
-                        id="conn-modal-cancel",
-                        color="secondary",
-                        outline=True,
-                        size="sm",
-                    ),
-                    dbc.Button(
-                        "Connect",
-                        id="conn-connect-btn",
-                        color="primary",
-                        size="sm",
-                    ),
-                ]
+                dbc.Button(
+                    "Cancel",
+                    id="conn-modal-cancel",
+                    color="secondary",
+                    outline=True,
+                    size="sm",
+                ),
             ),
         ],
         id="conn-modal",
@@ -454,7 +609,48 @@ def register_callbacks(app: dash.Dash) -> None:
             return no_update, f"Connection failed: {msg}"
         return (version or 0) + 1, ""
 
-    # --- Open a local folder (modal's second path) -------------------------
+    # --- Source-mode segmented control (Datalab server | Local folder) ----
+    @app.callback(
+        Output("conn-mode-datalab", "active"),
+        Output("conn-mode-local", "active"),
+        Output("conn-pane-datalab", "style"),
+        Output("conn-pane-local", "style"),
+        Input("conn-mode-datalab", "n_clicks"),
+        Input("conn-mode-local", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def _on_mode_switch(_d, _l):  # type: ignore[no-untyped-def]
+        from dash import ctx
+
+        local = ctx.triggered_id == "conn-mode-local"
+        return (
+            not local,
+            local,
+            {"display": "none"} if local else {},
+            {} if local else {"display": "none"},
+        )
+
+    # --- Browse… → native folder dialog (Local-folder tab) -----------------
+    @app.callback(
+        Output("conn-local-path", "value"),
+        Output("conn-error", "children", allow_duplicate=True),
+        Input("conn-local-browse-btn", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def _on_browse_click(n_clicks):  # type: ignore[no-untyped-def]
+        if not n_clicks:
+            return no_update, no_update
+        picked = _pick_folder_native()
+        if picked is None:
+            return no_update, (
+                "Folder dialog unavailable on this system — "
+                "type the path instead."
+            )
+        if not picked:  # user cancelled — keep whatever was typed
+            return no_update, no_update
+        return picked, ""
+
+    # --- Open a local folder (Local-folder tab's submit) -------------------
     @app.callback(
         Output("connection-version", "data", allow_duplicate=True),
         Output("conn-error", "children", allow_duplicate=True),
@@ -476,6 +672,8 @@ def register_callbacks(app: dash.Dash) -> None:
         state.pop("signed_out", None)
         state["client"] = source
         state["server_name"] = source.root.name
+        # Remember the (resolved) folder so the next launch pre-fills it.
+        save_local_dir(str(source.root))
         return (version or 0) + 1, ""
 
     # --- Sign out / Close folder ------------------------------------------

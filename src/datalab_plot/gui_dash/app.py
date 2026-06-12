@@ -67,6 +67,7 @@ _GLOBAL_CSS = """
     --text-muted:   #6c757d;
     --text-success: #198754;
     --text-danger:  #dc3545;
+    --text-warning: #997404;
 
     /* Spacing scale (4 steps) */
     --space-xs: 0.25rem;
@@ -146,6 +147,7 @@ strong { font-weight: 600; }
 .ui-feedback         { font-size: var(--text-sm); }
 .ui-feedback-success { color: var(--text-success); }
 .ui-feedback-danger  { color: var(--text-danger); }
+.ui-feedback-warning { color: var(--text-warning); }
 
 /* --- Navbar: brand grey surface ---------------------------- */
 .navbar {
@@ -374,6 +376,7 @@ strong { font-weight: 600; }
 [data-bs-theme="dark"] .ui-feedback         { color: #adb5bd; }
 [data-bs-theme="dark"] .ui-feedback-success { color: #75b798; }
 [data-bs-theme="dark"] .ui-feedback-danger  { color: #ea868f; }
+[data-bs-theme="dark"] .ui-feedback-warning { color: #ffda6a; }
 [data-bs-theme="dark"] .picker-grid-resizer { background: #2b2f33; border-color: #444a52; }
 [data-bs-theme="dark"] .apply-toolbar       { background: #2b2f33; border-color: #444a52; }
 [data-bs-theme="dark"] .ui-col-divider,

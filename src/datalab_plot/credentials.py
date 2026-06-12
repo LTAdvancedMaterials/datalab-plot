@@ -42,13 +42,20 @@ def _default_creds() -> dict[str, Any]:
     # refresh starts a fresh session (session_state is wiped), so an
     # in-session signed-out flag can't survive one. This disk flag can.
     # Default True — auto-connect unless the user has signed out.
-    return {"last_url": "", "keys": {}, "auto_connect": True}
+    # last_local_dir remembers the most recently opened local data folder
+    # so the Connect modal's Local-folder tab pre-fills it.
+    return {
+        "last_url": "",
+        "keys": {},
+        "auto_connect": True,
+        "last_local_dir": "",
+    }
 
 
 def load_creds() -> dict[str, Any]:
-    """Return ``{"last_url": str, "keys": {url: key}, "auto_connect": bool}``;
-    defaults on any read/parse failure (a corrupt file must never break the
-    app)."""
+    """Return ``{"last_url": str, "keys": {url: key}, "auto_connect": bool,
+    "last_local_dir": str}``; defaults on any read/parse failure (a corrupt
+    file must never break the app)."""
     try:
         data = json.loads(creds_path().read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError, OSError):
@@ -60,6 +67,7 @@ def load_creds() -> dict[str, Any]:
         "last_url": data.get("last_url") or "",
         "keys": keys if isinstance(keys, dict) else {},
         "auto_connect": data.get("auto_connect", True) is not False,
+        "last_local_dir": data.get("last_local_dir") or "",
     }
 
 
@@ -111,6 +119,16 @@ def set_auto_connect(enabled: bool) -> None:
     this False so a subsequent browser refresh doesn't silently reconnect."""
     data = load_creds()
     data["auto_connect"] = bool(enabled)
+    _write_creds(data)
+
+
+def save_local_dir(path: str) -> None:
+    """Persist the last successfully opened local data folder."""
+    p = (path or "").strip()
+    if not p:
+        return
+    data = load_creds()
+    data["last_local_dir"] = p
     _write_creds(data)
 
 

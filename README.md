@@ -154,14 +154,15 @@ row is auto-deselected and an error banner explains why.
 
 ### Plotting local files (no datalab needed)
 
-The Connect modal has a second path: enter a folder path under
-**"— or open a local folder of cycler files —"** and click *Open
-folder*. The app recursively lists every cycler export it finds
-(Biologic `.mpr`, Neware `.nda`/`.ndax`, Arbin `.res`, `.xls`/`.xlsx`,
-`.csv`, `.txt`) — one file per row — and the rest of the workflow is
-identical: filter by filename in the search box, stage, and plot. Your
-data files are read in place and never modified, copied, or deleted.
-Set `DATALAB_PLOT_LOCAL_DIR` to pre-fill the folder path. Notes:
+The Connect modal has a **Local folder** tab: pick a folder with
+*Browse…* (or type its path) and click *Open folder*. The app
+recursively lists every cycler export it finds (Biologic `.mpr`,
+Neware `.nda`/`.ndax`, Arbin `.res`, `.xls`/`.xlsx`, `.csv`, `.txt`)
+— one file per row — and the rest of the workflow is identical:
+filter by filename in the search box, stage, and plot. Your data
+files are read in place and never modified, copied, or deleted. The
+last opened folder is remembered and pre-filled on the next launch
+(`DATALAB_PLOT_LOCAL_DIR` serves as the fallback). Notes:
 
 - A session is either datalab **or** a local folder — *Close folder*
   (in the navbar dropdown) to switch.

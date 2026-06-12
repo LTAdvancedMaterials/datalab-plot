@@ -185,10 +185,30 @@ resize event makes the figure recompute when either divider moves.
 
 ### Local-folder mode
 
-The Connect modal has a second path: "open a local folder" puts a
-`LocalFolderSource` ([local_source.py](src/datalab_plot/local_source.py))
-into `state["client"]` instead of a `DatalabPlotClient`. A session is
+The Connect modal has a **segmented source selector** ("Datalab
+server" | "Local folder" — a connected `dbc.ButtonGroup`, the house
+pattern; `dbc.Tabs` rendered full-width-stacked inside the modal, do
+not switch back). Each mode is an always-mounted, style-toggled pane
+carrying its own solid-primary submit (Connect / Open folder); the
+footer holds only Cancel. Both panes stay mounted so every
+input/button remains a valid callback Input. Opening a folder puts a
+`LocalFolderSource`
+([local_source.py](src/datalab_plot/local_source.py)) into
+`state["client"]` instead of a `DatalabPlotClient`. A session is
 **exclusively** one source or the other (switch = sign out first).
+
+- **Browse… opens a native folder dialog in a subprocess**
+  (`connection._pick_folder_native`): on macOS via `osascript`
+  (`choose folder`) — uv-managed python-build-standalone interpreters
+  bundle tkinter with a broken Tcl runtime path, so `tk.Tk()` raises
+  TclError even though `import tkinter` succeeds; do NOT "simplify"
+  back to tkinter on darwin. Other platforms use a tkinter subprocess
+  (never call tkinter on a Flask worker thread — NSWindow/threading
+  crashes). Dialog failure degrades to a typed-path hint; cancel is
+  distinguished from failure (osascript error -128 → cancelled).
+- The last successfully opened folder persists as `last_local_dir` in
+  the credentials JSON (`credentials.save_local_dir`) and pre-fills
+  the pane on next launch, beating `$DATALAB_PLOT_LOCAL_DIR`.
 
 - Both classes satisfy the `DataSource` Protocol (`get_item` /
   `fetch_files_verbose` / `purge`) consumed by
@@ -425,6 +445,7 @@ extend the class table here, not invent a one-off.
 | Helper caption / hint | `ui-caption` | `PNG: hover the plot…`, `Leave blank for auto-range.` |
 | Feedback success | `ui-feedback ui-feedback-success` | `Saved to my-plot.json` |
 | Feedback error | `ui-feedback ui-feedback-danger` | `Save failed` |
+| Feedback warning | `ui-feedback ui-feedback-warning` | `saved from another source — items may not resolve` |
 | Brand wordmark (navbar only) | `navbar-brand` (Bootstrap auto-applies) | `datalab-plot` |
 
 #### Rules
@@ -545,6 +566,14 @@ of the per-item file caches). Schema in `plot_io.py`:
 
 - Filenames are sanitised to `[a-zA-Z0-9_-]`; the original name is
   preserved in the JSON.
+- `datalab_url` records the session source: a server URL or
+  `"local:<resolved-root>"` for local-folder mode (written by
+  `export._session_source`). The Load dropdown labels carry a short
+  hint per config (`plot_io.source_hint`: `📁 <folder>` or the server
+  host); loading a config whose source differs from the current
+  session shows an amber `ui-feedback-warning` ("staged items may not
+  resolve") but still applies everything — warn, don't block. Configs
+  without the field (pre-feature) never warn.
 - "Forget cached data" (in the connected dropdown) clears in-memory
   parsed data AND `shutil.rmtree`s every subdir under `client.cache_root`
   EXCEPT `saved_plots/` — saved configs survive the wipe.
