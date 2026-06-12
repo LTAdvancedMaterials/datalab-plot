@@ -58,7 +58,7 @@ your home dir). The two commands below are identical on all OSes:
 
 ```bash
 uv venv --python 3.12
-uv pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
+uv pip install "datalab-plot[gui,picker] @ git+https://github.com/lightningtree-ai/datalab-plot"
 ```
 
 `uv` downloads Python 3.12 if you don't already have it, creates `.venv/`
@@ -265,7 +265,7 @@ Pick this if you want the starter notebook to hand or might tweak the
 code.
 
 ```bash
-git clone https://github.com/ltadvancedmaterials/datalab-plot
+git clone https://github.com/lightningtree-ai/datalab-plot
 cd datalab-plot
 uv sync --extra gui --extra picker
 ```
@@ -286,7 +286,7 @@ source .venv/bin/activate
 # Windows PowerShell:
 .venv\Scripts\Activate.ps1
 
-pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
+pip install "datalab-plot[gui,picker] @ git+https://github.com/lightningtree-ai/datalab-plot"
 ```
 
 ### Optional extras
@@ -299,7 +299,7 @@ pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmateria
 Core library + CLI work without either:
 
 ```bash
-uv pip install "datalab-plot @ git+https://github.com/ltadvancedmaterials/datalab-plot"
+uv pip install "datalab-plot @ git+https://github.com/lightningtree-ai/datalab-plot"
 ```
 
 ### Why pin Python 3.12?
@@ -321,7 +321,7 @@ Your interpreter is Python 3.13 or newer. Re-create the venv on 3.12:
 ```powershell
 Remove-Item -Recurse -Force .venv
 uv venv --python 3.12
-uv pip install "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"
+uv pip install "datalab-plot[gui,picker] @ git+https://github.com/lightningtree-ai/datalab-plot"
 ```
 
 </details>
@@ -386,9 +386,9 @@ build is a one-liner. Pick the row that matches how you installed.
 
 | You installed with…              | Pull the latest                                                                                       |
 |----------------------------------|-------------------------------------------------------------------------------------------------------|
-| `uv pip install …git+https…`     | `uv pip install --upgrade "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"` |
+| `uv pip install …git+https…`     | `uv pip install --upgrade "datalab-plot[gui,picker] @ git+https://github.com/lightningtree-ai/datalab-plot"` |
 | `uv sync` from a repo clone      | `git pull && uv sync --extra gui --extra picker`                                                      |
-| plain `pip install …git+https…`  | `pip install --upgrade "datalab-plot[gui,picker] @ git+https://github.com/ltadvancedmaterials/datalab-plot"`    |
+| plain `pip install …git+https…`  | `pip install --upgrade "datalab-plot[gui,picker] @ git+https://github.com/lightningtree-ai/datalab-plot"`    |
 
 Run the same command from the directory that holds `.venv/` (or with the
 venv activated). Drop the `[gui,picker]` extras if you didn't install them

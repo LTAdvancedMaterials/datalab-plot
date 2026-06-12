@@ -27,9 +27,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ltadvancedmaterials/datalab-plot"
-Repository = "https://github.com/ltadvancedmaterials/datalab-plot"
-Issues = "https://github.com/ltadvancedmaterials/datalab-plot/issues"
+Homepage = "https://github.com/lightningtree-ai/datalab-plot"
+Repository = "https://github.com/lightningtree-ai/datalab-plot"
+Issues = "https://github.com/lightningtree-ai/datalab-plot/issues"
 
 [project.optional-dependencies]
 picker = ["ipywidgets>=8"]
