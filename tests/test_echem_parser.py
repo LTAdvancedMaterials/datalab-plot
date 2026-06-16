@@ -214,6 +214,46 @@ def test_voltage_capacity_series_continuous_across_cv_step():
             assert np.all(np.diff(seg) >= -1e-9)  # monotonic within the half
 
 
+def test_normalise_neware_state_preserves_non_neware_rows_in_mixed_load():
+    # multi_echem_file_loader stitches a Neware .ndax onto a Biologic .mpr:
+    # the Neware rows carry a Status string, the Biologic rows have Status NaN
+    # but a valid navani state (0/1/"R"). The normaliser must reclassify only
+    # the Neware rows and leave the Biologic cycles intact — the regression
+    # where every NaN-Status row collapsed to "R" and vanished from the
+    # cycle-summary / V-Q plots while still showing in V-vs-t.
+    neware = _make_neware_cccv_df(n_cycles=2)  # 2 Neware cycles, has Status
+
+    # A Biologic-style tail: 2 more cycles, no Status column values, state set
+    # by navani's bio_state (0 charge / 1 discharge / "R" rest).
+    bio_parts: list[pd.DataFrame] = []
+    for _ in range(2):
+        bio_parts.append(pd.DataFrame({
+            "Current": np.full(60, 1.0), "Voltage": np.linspace(3.0, 4.2, 60),
+            "state": [0] * 60, "Capacity": np.linspace(0.0, 0.5, 60),
+        }))
+        bio_parts.append(pd.DataFrame({
+            "Current": np.full(60, -1.0), "Voltage": np.linspace(4.2, 3.0, 60),
+            "state": [1] * 60, "Capacity": np.linspace(0.0, 0.5, 60),
+        }))
+    bio = pd.concat(bio_parts, ignore_index=True)
+    bio["Status"] = np.nan  # NaN for non-Neware rows, as after the concat
+
+    combined = pd.concat([neware, bio], ignore_index=True)
+    combined["Time"] = np.arange(len(combined), dtype=float) * 30.0
+
+    out = _normalise_neware_state(combined)
+
+    # Biologic rows keep their navani state — they are NOT forced to "R".
+    bio_mask = combined["Status"].isna()
+    assert set(out.loc[bio_mask, "state"].unique()) == {0, 1}
+    # All four cycles survive (2 Neware + 2 Biologic), not just the Neware two.
+    assert out["full cycle"].max() == 4
+    # The summary spans every cycle with non-zero capacity on the Biologic tail.
+    summ = cycle_summary(out)
+    assert summ["cycle"].max() == 4
+    assert (summ["Discharge_mAh"] > 0).all()
+
+
 def test_normalise_neware_state_handles_protocol_markers():
     # A "Cycle" / "Pulse" / "Control" row at the head of the file (Neware
     # programs often emit these before any real cycling) must not steal a
