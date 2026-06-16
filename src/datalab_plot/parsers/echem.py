@@ -133,7 +133,7 @@ def _normalise_neware_state(df: pd.DataFrame) -> pd.DataFrame:
     for Neware data so CV phases stay inside their parent half-cycle.
 
     No-op unless ``df`` carries a Neware-shaped ``Status`` column. When it
-    does, every row's ``state`` is reclassified from ``Status`` (so CV and
+    does, the Neware rows' ``state`` is reclassified from ``Status`` (so CV and
     other unmodelled steps stop reading as ``"unknown"``), then
     ``half cycle`` and ``full cycle`` are rebuilt using the same cumulative-
     diff algorithm navani uses. ``Capacity`` is re-integrated from
@@ -141,15 +141,31 @@ def _normalise_neware_state(df: pd.DataFrame) -> pd.DataFrame:
     raw ``Charge_Capacity`` / ``Discharge_Capacity`` columns reset at each
     *step* — so without this the V-Q line jumps back to ``Q = 0`` at every
     CC→CV step boundary inside one charge half.
+
+    Only rows carrying a genuine Neware ``Status`` are reclassified. When a
+    Neware ``.ndax`` is stitched together with another cycler's file (e.g. a
+    Biologic ``.mpr``) by ``multi_echem_file_loader``, the combined frame has
+    ``Status`` populated only for the Neware rows; the other rows have
+    ``Status == NaN``. Reclassifying those would map them all to ``"R"``
+    (rest), collapsing them out of the half-cycle diff so they silently vanish
+    from every capacity-/cycle-domain plot while still appearing in V-vs-t.
+    Their navani-assigned ``state`` is preserved instead.
     """
     if "Status" not in df.columns:
         return df
     statuses = df["Status"].astype(str)
-    if not statuses.isin(_NEWARE_STATUSES).any():
+    is_neware_row = statuses.isin(_NEWARE_STATUSES)
+    if not is_neware_row.any():
         return df
 
     df = df.copy()
-    df["state"] = statuses.map(_classify_neware_status)
+    # Reclassify ONLY the genuine Neware rows; keep navani's own state for any
+    # rows that came from a different cycler in a mixed multi-file load.
+    reclassified = statuses.map(_classify_neware_status)
+    if "state" in df.columns:
+        df["state"] = df["state"].where(~is_neware_row, reclassified)
+    else:
+        df["state"] = reclassified
 
     # navani's exact cycle-change → half-cycle algorithm, applied to the
     # corrected state column. Rest rows don't carry a cycle change, so the
@@ -171,9 +187,16 @@ def _normalise_neware_state(df: pd.DataFrame) -> pd.DataFrame:
     if {"Current", "Time"}.issubset(df.columns):
         dt = df["Time"].diff().fillna(0.0).clip(lower=0.0)
         dq = (df["Current"].abs() * dt) / 3600.0  # mA · s → mAh
-        capacity = np.zeros(len(df), dtype=float)
+        # Start from the existing Capacity so half cycles belonging to a
+        # non-Neware file (mixed .ndax + .mpr stacks) keep navani's own
+        # capacity; only Neware half cycles are re-integrated below.
+        if "Capacity" in df.columns:
+            capacity = df["Capacity"].to_numpy(dtype=float).copy()
+        else:
+            capacity = np.zeros(len(df), dtype=float)
+        neware_half_cycles = set(df.loc[is_neware_row, "half cycle"].to_numpy())
         for hc, idx in df.groupby("half cycle").groups.items():
-            if hc == 0:
+            if hc == 0 or hc not in neware_half_cycles:
                 continue
             seg_states = df.loc[idx, "state"]
             active = idx[seg_states.to_numpy() != "R"]

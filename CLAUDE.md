@@ -90,7 +90,16 @@ series.py   DataFrames → render-agnostic plot series (NamedTuples)
   `load_echem` call and re-derives `state` / `cycle change` / `half cycle`
   / `full cycle` / `Capacity` from `Status`. No-op for non-Neware data. If
   you ever rip out the post-processor, V-Q on Neware files will fragment
-  again.
+  again. **Mixed multi-file loads:** when a Neware `.ndax` is stitched onto
+  another cycler's file (e.g. a Biologic `.mpr`) by
+  `multi_echem_file_loader`, only the Neware rows carry a `Status`; the rest
+  have `Status == NaN`. The post-processor reclassifies / re-integrates
+  *only* the genuine Neware rows (`Status ∈ _NEWARE_STATUSES`) and preserves
+  navani's own `state` / `Capacity` for the others — recomputing half/full
+  cycle across the whole frame so numbering stays continuous. Do NOT revert
+  to reclassifying every row from `Status`: NaN maps to `"R"`, which silently
+  drops the non-Neware cycles from cycle-summary / V-Q / dQ/dV while V-vs-t
+  (which ignores `state`) still shows them.
 - **V-Q plots drop rest rows.** `series.voltage_capacity_series` filters
   `state == 'R'` before splitting half-cycles. Rest periods sit at constant
   Q while V relaxes, so plotting them draws vertical "OCV recovery" lines
