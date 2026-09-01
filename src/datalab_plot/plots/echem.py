@@ -1,4 +1,8 @@
-"""matplotlib plots for electrochemical cycling data."""
+"""matplotlib plots for electrochemical cycling data.
+
+Backported from a private internal Lightning Tree application; see
+``SYNC.md`` before moving anything between it and here.
+"""
 from __future__ import annotations
 
 from collections.abc import Mapping

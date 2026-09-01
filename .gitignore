@@ -35,3 +35,6 @@ files/
 .idea/
 .vscode/
 *.swp
+
+# Local sync configuration for `make drift` (see SYNC.md).
+sync.local.mk
