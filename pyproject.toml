@@ -1,20 +1,32 @@
 [project]
 name = "datalab-plot"
 version = "0.1.0"
-description = "Plot data from a datalab instance locally in Jupyter, Python, or a Streamlit web GUI. Multi-cell echem comparisons, NMR, XRD, UV-Vis."
+description = "Plot data from a datalab instance locally in Jupyter, Python, a CLI, or a Dash web GUI. Multi-cell echem comparisons, NMR, XRD, UV-Vis."
 # navani 0.1.x pins numpy<2, and numpy 1.26.4 only publishes cp312 wheels —
 # Python >=3.13 forces a from-source numpy build, which fails on Windows
 # without MSVC. Cap to 3.12 until navani relaxes its numpy pin.
 requires-python = ">=3.12,<3.13"
 readme = "README.md"
 keywords = ["datalab", "electrochemistry", "battery", "cycling", "nmr", "xrd"]
-authors = [{ name = "LT Advanced Materials" }]
+authors = [{ name = "Lightning Tree" }]
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
 
 dependencies = [
     "datalab-api>=0.5.0",
     "jupyter>=1.1.1",
     "matplotlib>=3.10.9",
     "navani>=0.1.18",
+    # Read directly for .nda/.ndax (see parsers.echem._load_neware); the PyPI
+    # distribution normalises to "newarenda", the import name is NewareNDA.
+    "newarenda>=2024.8.1",
     "nmrglue>=0.10",
     "numpy>=1.26.4",
     "openpyxl>=3.1.5",
@@ -44,12 +56,8 @@ gui = [
 datalab-plot = "datalab_plot.cli:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-# NOTICE carries the MIT notice for code ported from datalab; ship it too.
-license-files = ["LICENSE", "NOTICE"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
