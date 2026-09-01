@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    # Only 3.12: navani 0.1.x pins numpy<2, and numpy 1.26.4 publishes cp312
+    # wheels only. See the requires-python note in pyproject.toml.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Lint
+        run: uv run ruff check src tests
+
+      - name: Types
+        run: uv run mypy
+
+      - name: Tests
+        run: uv run pytest
+
+      # No automated tests cover the Dash UI. Booting the app and fetching
+      # /_dash-dependencies catches a callback wired to an id that is not in
+      # the layout, which is the failure mode a unit test cannot see.
+      - name: Dash smoke test
+        run: |
+          uv run datalab-plot gui --no-browser --port 8501 &
+          for _ in $(seq 1 30); do
+            curl -sf -o /dev/null http://localhost:8501/ && break
+            sleep 1
+          done
+          for path in / /_dash-layout /_dash-dependencies; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:8501${path}")
+            echo "${path} -> ${code}"
+            [ "$code" = "200" ] || exit 1
+          done

@@ -409,7 +409,12 @@ embeds it in Vue. This library takes the orthogonal approach:
    them locally, size-checked so a cached file is reused when its byte
    count matches the server's metadata.
 2. Parse with the same upstream libraries the datalab server uses
-   (`navani.echem`, `nmrglue`, custom XRD / UV-Vis parsers).
+   (`navani.echem`, `nmrglue`, custom XRD / UV-Vis parsers) — except for
+   Neware `.nda` / `.ndax`, which are read directly via `NewareNDA`.
+   navani's Neware reader rebuilds its time axis by grouping on
+   `Step_Index`, the protocol step *definition* number, which repeats every
+   loop; that corrupts elapsed time at every step boundary and any capacity
+   integrated against it. See `CLAUDE.md` for the measured error.
 3. Draw fresh figures with matplotlib (library / CLI / notebook) or Plotly
    (GUI). No round-trip through the datalab plotting service.
 
@@ -417,7 +422,8 @@ embeds it in Vue. This library takes the orthogonal approach:
 
 | Block         | Parser                                  | File types                                                       |
 |---------------|-----------------------------------------|------------------------------------------------------------------|
-| Cycle / echem | `navani.echem.echem_file_loader`        | `.mpr`, `.res`, `.xls`, `.xlsx`, `.nda`, `.ndax`, `.csv`, `.txt` |
+| Cycle / echem (Neware) | `NewareNDA.read` (direct)        | `.nda`, `.ndax`                                                  |
+| Cycle / echem (other)  | `navani.echem.echem_file_loader` | `.mpr`, `.res`, `.xls`, `.xlsx`, `.csv`, `.txt`                  |
 | NMR (1D)      | `nmrglue.bruker` / `nmrglue.jcampdx`    | Bruker `.zip`, JCAMP-DX `.jdx` / `.dx`                           |
 | XRD           | Custom parsers (`xml.etree`)            | `.xy`, `.xye`, `.dat`, `.xrdml`                                  |
 | UV-Vis        | Custom (pandas)                         | `.txt` (semicolon-separated, 7-row header)                       |
@@ -439,7 +445,8 @@ src/datalab_plot/
   cli.py               argparse entry point (incl. `gui` subcommand)
   gui_dash/            Dash app — navbar, layout, panels, callbacks
   parsers/
-    echem.py           Navani wrapper + dQ/dV + cycle-split helpers
+    echem.py           navani wrapper (direct NewareNDA for Neware)
+                       + dQ/dV + cycle-split helpers
     nmr.py             Bruker + JCAMP
     xrd.py             XRDML + whitespace-delimited
     uvvis.py           ASCII export parsing
@@ -449,12 +456,24 @@ src/datalab_plot/
 tests/                 pytest suite (synthetic data; run via `make check`)
 notebooks/
   starter.ipynb        End-to-end demo notebook
+
+CLAUDE.md              Architecture, conventions, and the reasons behind them
+CONTRIBUTING.md        Setup, the check loop, how to report a data bug
+CHANGELOG.md           What changed, breaking behaviour first
+SYNC.md                Backported modules and the divergences that are deliberate
 ```
 
 `parsers/` and `series.py` are pure (no I/O, no UI framework) —
 `series.py` is the shared data layer feeding both the matplotlib
 (`plots/`) and Plotly (`plotly_builders.py`, consumed by `gui_dash/`)
-renderers. See [CLAUDE.md](CLAUDE.md) for the contributor guide.
+renderers.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) covers setup and the check loop;
+[CLAUDE.md](CLAUDE.md) is the full architecture guide.
+
+If you have plotted Neware `.nda` / `.ndax` files with an earlier version, read
+[CHANGELOG.md](CHANGELOG.md) before comparing old numbers against new ones. The
+capacities changed, and the old ones were wrong.
 
 ## License
 

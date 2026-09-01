@@ -1,11 +1,15 @@
 """Render-agnostic plot-series builders.
 
 This module sits between the parsers (raw navani DataFrames) and the two
-rendering backends — matplotlib in ``plots/`` and Plotly in ``gui/``. Each
-builder turns a DataFrame into plain arrays / ``NamedTuple``s so both backends
-draw *identical* data and the per-cycle iteration logic lives in one place.
+rendering backends: matplotlib in ``plots/`` and Plotly in
+``plotly_builders.py``. Each builder turns a DataFrame into plain arrays /
+``NamedTuple``s so both backends draw *identical* data and the per-cycle
+iteration logic lives in one place.
 
-Builders here are pure: no plotting, no I/O, no Streamlit.
+Builders here are pure: no plotting, no I/O, no UI framework.
+
+Backported from a private internal Lightning Tree application; see
+``SYNC.md`` before moving anything between it and here.
 """
 from __future__ import annotations
 

@@ -1,9 +1,19 @@
-"""Parse electrochemical cycling files via navani and compute derived quantities."""
+"""Parse electrochemical cycling files and compute derived quantities.
+
+Most formats go through ``navani.echem``. Neware ``.nda`` / ``.ndax`` do not:
+navani's Neware reader groups on ``Step_Index``, the protocol step
+definition number, which repeats every loop and corrupts the time axis at
+every step boundary. Reported upstream as
+https://github.com/be-smith/navani/issues/62. See ``_load_neware``
+and the Neware section of ``CLAUDE.md`` for the measured error.
+
+Backported from a private internal Lightning Tree application. See
+``SYNC.md`` for the divergences that are deliberate, so a cleanup does
+not undo a fix that exists only here.
+"""
 from __future__ import annotations
 
-import functools
 import logging
-import warnings
 from pathlib import Path
 
 import navani.echem as ec
@@ -11,41 +21,23 @@ import numpy as np
 import pandas as pd
 
 
-# Suppress the per-file INFO chatter from NewareNDA (.nda/.ndax). Two
-# independent defenses, because NewareNDA's read() resets the logger level on
-# every call from its log_level='INFO' default, and any rich/pydatalab-style
-# logging config can later flip it back:
-#
-#   1. Monkey-patch NewareNDA.NewareNDA.read so navani's positional call uses
-#      log_level='WARNING'.
-#   2. Attach a Filter to the 'newarenda' logger that drops any record below
-#      WARNING regardless of the logger's nominal level. Filters survive
-#      setLevel() calls, so this catches resets we couldn't anticipate.
+# Suppress the per-file INFO chatter from NewareNDA (.nda/.ndax). `_read_neware`
+# passes log_level='WARNING' on every call, but NewareNDA resets its logger level
+# from its own default on each read and any rich/pydatalab-style logging config
+# can later flip it back — so a Filter on the 'newarenda' logger drops anything
+# below WARNING regardless of the logger's nominal level. Filters survive
+# setLevel(), so this catches resets we couldn't anticipate.
 class _DropInfoFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
         return record.levelno >= logging.WARNING
 
 
+logger = logging.getLogger(__name__)
+
 _newarenda_logger = logging.getLogger("newarenda")
 _newarenda_logger.setLevel(logging.WARNING)
 if not any(isinstance(f, _DropInfoFilter) for f in _newarenda_logger.filters):
     _newarenda_logger.addFilter(_DropInfoFilter())
-
-try:
-    import NewareNDA.NewareNDA as _newaremod
-
-    if not getattr(_newaremod, "_datalab_plot_patched", False):
-        _orig_read = _newaremod.read
-
-        @functools.wraps(_orig_read)
-        def _quiet_read(file, *args, log_level="WARNING", **kwargs):
-            return _orig_read(file, *args, log_level=log_level, **kwargs)
-
-        _newaremod.read = _quiet_read
-        _newaremod._datalab_plot_patched = True
-except ImportError:
-    pass
-
 
 CYCLING_EXTENSIONS = (
     ".mpr",
@@ -57,6 +49,9 @@ CYCLING_EXTENSIONS = (
     ".csv",
     ".txt",
 )
+
+# Read directly by `_load_neware`, bypassing navani — see its docstring.
+_NEWARE_EXTENSIONS = (".nda", ".ndax")
 
 
 def is_cycling_file(file_meta: dict) -> bool:
@@ -71,27 +66,21 @@ def is_cycling_file(file_meta: dict) -> bool:
 
 
 def load_echem(paths: Path | list[Path]) -> pd.DataFrame:
-    """Load one or more cycler files with navani and return the raw DataFrame.
+    """Load one or more cycler files and return the raw DataFrame.
 
-    For multiple files, ``navani.echem.multi_echem_file_loader`` stitches them
-    together with cycle-index offsets.
+    Multiple files are parsed independently and stitched into one continuous
+    run in list order — the caller orders them, which is upload order for a
+    cell's files. ``navani.echem.multi_echem_file_loader`` is deliberately not
+    used: it re-reads each file through navani's own loaders, so a Neware stack
+    would inherit the broken time axis ``_load_neware`` exists to avoid, and it
+    then re-integrates capacity against that same axis.
     """
     if isinstance(paths, (str, Path)):
-        return _normalise_neware_state(ec.echem_file_loader(str(paths)))
+        return _load_one(paths)
     paths = list(paths)
     if len(paths) == 1:
-        return _normalise_neware_state(ec.echem_file_loader(str(paths[0])))
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=(
-                "Capacity columns are not equal, replacing with new capacity column"
-            ),
-            category=UserWarning,
-        )
-        return _normalise_neware_state(
-            ec.multi_echem_file_loader([str(p) for p in paths])
-        )
+        return _load_one(paths[0])
+    return _stitch([_load_one(p) for p in paths])
 
 
 # The full set of strings ``NewareNDA`` writes into the ``Status`` column
@@ -126,6 +115,121 @@ def _classify_neware_status(status: object) -> object:
     if status.endswith("_Chg"):
         return 0
     return "R"
+
+
+def _rebuild_cycles(df: pd.DataFrame) -> None:
+    """Recompute ``cycle change`` / ``half cycle`` / ``full cycle`` in place.
+
+    navani's exact cycle-change → half-cycle algorithm: rest rows never carry a
+    cycle change, so the diff only fires across true charge↔discharge
+    transitions; the first active row starts half cycle 1 (rows before it are
+    half 0 → full cycle 0, navani's leading partial cycle).
+    """
+    df["cycle change"] = False
+    not_rest = df.index[df["state"] != "R"]
+    df.loc[not_rest, "cycle change"] = (
+        df.loc[not_rest, "state"].ne(df.loc[not_rest, "state"].shift())
+    )
+    df["half cycle"] = df["cycle change"].astype(bool).cumsum().astype(int)
+    df["full cycle"] = np.ceil(df["half cycle"].to_numpy() / 2).astype(int)
+
+
+def _accumulate_resets(values: object) -> np.ndarray:
+    """Stitch a per-step-resetting counter into one monotonic series.
+
+    Neware's ``Charge_Capacity`` / ``Discharge_Capacity`` counters restart at
+    every *step*, so within one half cycle a CC→CV boundary (or an interleaved
+    rest) drops the counter back to ~0. Wherever the series falls, the running
+    offset absorbs the value it fell from, so the output keeps climbing from
+    where the previous step left off. NaNs are treated as "hold the previous
+    value" (they neither advance nor reset the counter).
+    """
+    v = np.asarray(values, dtype=float)
+    if v.size == 0:
+        return v
+    # NaN → previous finite value (leading NaNs → 0) so diffs stay meaningful.
+    if np.isnan(v).any():
+        idx = np.arange(v.size)
+        good = ~np.isnan(v)
+        v = v[np.maximum.accumulate(np.where(good, idx, 0))]
+        v = np.where(np.isnan(v), 0.0, v)
+    offsets = np.zeros_like(v)
+    drops = np.where(np.diff(v) < 0)[0]
+    offsets[drops + 1] = v[drops]
+    return v + np.cumsum(offsets)
+
+
+def _continuous_time_s(df: pd.DataFrame) -> np.ndarray | None:
+    """Monotonic elapsed-seconds array for a raw cycler frame.
+
+    Prefers the absolute ``Timestamp`` column — wall clock, monotonic across
+    steps, cycles and stitched channels, immune to the per-step/per-cycle
+    resets that Neware's relative ``Time`` suffers. Falls back to whatever
+    relative time column exists, absorbing resets by accumulating only its
+    non-negative diffs. Returns None when the frame has no time source.
+    """
+    if "Timestamp" in df.columns:
+        ts = pd.to_datetime(df["Timestamp"], errors="coerce")
+        if ts.notna().any():
+            sec = (ts - ts.dropna().iloc[0]).dt.total_seconds().to_numpy(dtype=float)
+            finite = sec[~np.isnan(sec)]
+            if finite.size and np.all(np.diff(finite) >= 0):
+                return sec
+
+    for col in ("Time", "Step Time / s", "TestTime", "Total Time"):
+        if col in df.columns:
+            sec = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype=float)
+            if not np.isfinite(sec).any():
+                continue
+            diffs = np.diff(sec, prepend=sec[0])
+            diffs[~(diffs >= 0)] = 0.0  # resets and NaN gaps don't advance time
+            return np.cumsum(diffs)
+    return None
+
+
+def _integrate_capacity(
+    df: pd.DataFrame,
+    *,
+    only_half_cycles: set[int] | None = None,
+    seed_existing: bool = False,
+) -> None:
+    """Rebuild ``Capacity`` in place as ∫|I|·dt per half cycle.
+
+    ``dt`` comes from the frame's ``Time`` column, so the result is only as
+    good as that axis — see ``_load_neware``, which avoids this path entirely
+    for Neware files by reading the cycler's own counters instead.
+
+    During rest the current is ~0 so the curve holds; the first active sample
+    of each half is pinned to Q = 0, matching navani's per-half-cycle reset.
+    No-op when the frame lacks a current or time column.
+
+    ``only_half_cycles`` restricts the rewrite to those half cycles, and
+    ``seed_existing`` starts from the frame's current ``Capacity`` rather than
+    zeros. Together they let a mixed-cycler frame keep navani's own capacity
+    for the halves that did not come from a Neware file.
+    """
+    if not {"Current", "Time"}.issubset(df.columns):
+        return
+    dt = df["Time"].diff().fillna(0.0).clip(lower=0.0)
+    dq = (df["Current"].abs() * dt) / 3600.0  # mA · s → mAh
+    if seed_existing and "Capacity" in df.columns:
+        capacity = df["Capacity"].to_numpy(dtype=float).copy()
+    else:
+        capacity = np.zeros(len(df), dtype=float)
+    for hc, idx in df.groupby("half cycle").groups.items():
+        if hc == 0 or (only_half_cycles is not None and hc not in only_half_cycles):
+            continue
+        seg_states = df.loc[idx, "state"]
+        active = idx[seg_states.to_numpy() != "R"]
+        if len(active) == 0:
+            continue
+        first_active = active[0]
+        seg_dq = dq.loc[idx].copy()
+        # Pin the first active sample to Q = 0 (and any pre-active rests
+        # along with it). Matches navani's _reset_capacity_per_half_cycle.
+        seg_dq.loc[idx[idx <= first_active]] = 0.0
+        capacity[df.index.get_indexer(idx)] = seg_dq.cumsum().to_numpy()
+    df["Capacity"] = capacity
 
 
 def _normalise_neware_state(df: pd.DataFrame) -> pd.DataFrame:
@@ -170,100 +274,265 @@ def _normalise_neware_state(df: pd.DataFrame) -> pd.DataFrame:
     # navani's exact cycle-change → half-cycle algorithm, applied to the
     # corrected state column. Rest rows don't carry a cycle change, so the
     # diff only fires across true CC↔DCh transitions.
-    df["cycle change"] = False
-    not_rest = df.index[df["state"] != "R"]
-    df.loc[not_rest, "cycle change"] = (
-        df.loc[not_rest, "state"].ne(df.loc[not_rest, "state"].shift())
-    )
-    df["half cycle"] = df["cycle change"].astype(bool).cumsum().astype(int)
-    df["full cycle"] = np.ceil(df["half cycle"].to_numpy() / 2).astype(int)
+    _rebuild_cycles(df)
+
+    # A frame that is *entirely* Neware rows (a .nda re-exported through Excel,
+    # say) can also have its time axis rebuilt from Timestamp. A mixed stack
+    # cannot: only the Neware rows carry a Timestamp, so a global rewrite would
+    # write NaT-derived NaNs over the other cycler's perfectly good Time.
+    if bool(is_neware_row.all()):
+        elapsed = _continuous_time_s(df)
+        if elapsed is not None:
+            df["Time"] = elapsed
 
     # Rebuild Capacity by integrating |Current|·dt per corrected half cycle.
     # During rest Current ≈ 0 so the curve stays flat; during CV Current is
     # tapering but non-zero so the curve continues smoothly from where the CC
-    # phase left off. Pre-first-active rest rows in a half cycle are pinned
-    # to Q = 0 so the trace starts cleanly at the first real charge/discharge
-    # point.
-    if {"Current", "Time"}.issubset(df.columns):
-        dt = df["Time"].diff().fillna(0.0).clip(lower=0.0)
-        dq = (df["Current"].abs() * dt) / 3600.0  # mA · s → mAh
-        # Start from the existing Capacity so half cycles belonging to a
-        # non-Neware file (mixed .ndax + .mpr stacks) keep navani's own
-        # capacity; only Neware half cycles are re-integrated below.
-        if "Capacity" in df.columns:
-            capacity = df["Capacity"].to_numpy(dtype=float).copy()
-        else:
-            capacity = np.zeros(len(df), dtype=float)
-        neware_half_cycles = set(df.loc[is_neware_row, "half cycle"].to_numpy())
-        for hc, idx in df.groupby("half cycle").groups.items():
-            if hc == 0 or hc not in neware_half_cycles:
-                continue
-            seg_states = df.loc[idx, "state"]
-            active = idx[seg_states.to_numpy() != "R"]
-            if len(active) == 0:
-                continue
-            first_active = active[0]
-            seg_dq = dq.loc[idx].copy()
-            # Pin the first active sample to Q = 0 (and any pre-active rests
-            # along with it). Matches navani's _reset_capacity_per_half_cycle.
-            seg_dq.loc[idx[idx <= first_active]] = 0.0
-            capacity[df.index.get_indexer(idx)] = seg_dq.cumsum().to_numpy()
-        df["Capacity"] = capacity
+    # phase left off. Only Neware half cycles are re-integrated, and the
+    # existing column is the seed, so half cycles belonging to a non-Neware
+    # file (mixed .ndax + .mpr stacks) keep navani's own capacity.
+    _integrate_capacity(
+        df,
+        only_half_cycles=set(df.loc[is_neware_row, "half cycle"].to_numpy()),
+        seed_existing=True,
+    )
 
     return df
 
 
-def cycle_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
-    """Return a per-cycle summary DataFrame.
+# ---------------------------------------------------------------------------
+# Neware (.nda/.ndax) — read directly, bypassing navani's broken time rebuild
+# ---------------------------------------------------------------------------
 
-    Adds ``Charge_mAh``, ``Discharge_mAh``, ``Charge_Ah``, ``Discharge_Ah``
-    and ``CE`` (discharge/charge ratio).  Uses ``navani.echem.cycle_summary``
-    when available, falling back to a grouped max() on ``full cycle``.
 
-    navani's ``Capacity`` column is in mAh (matching the raw cycler file
-    units).  Both the primary and fallback paths populate ``Charge_mAh`` /
-    ``Discharge_mAh`` first; ``_Ah`` columns are derived afterwards.
+def _read_neware(path: str | Path) -> pd.DataFrame:
+    """The raw ``NewareNDA.read`` call — a seam tests fake with a synthetic frame.
+
+    Imported lazily so a missing NewareNDA only bites when a Neware file is
+    actually opened.
     """
-    try:
-        summary = ec.cycle_summary(raw_df)
-    except Exception:
-        summary = None
+    from NewareNDA import read
 
-    if summary is not None and "Charge Capacity" in summary.columns:
-        out = pd.DataFrame(
-            {
-                "cycle": pd.to_numeric(summary.index, downcast="integer"),
-                "Charge_mAh": summary["Charge Capacity"],
-                "Discharge_mAh": summary["Discharge Capacity"],
-            }
-        ).reset_index(drop=True)
+    # NewareNDA resets its logger level on every read; WARNING keeps the
+    # per-file INFO chatter out of the log.
+    return read(str(path), log_level="WARNING")
+
+
+def _load_neware(path: str | Path) -> pd.DataFrame:
+    """Load a Neware ``.nda`` / ``.ndax`` into a navani-convention DataFrame.
+
+    Every derived column is built here from the raw file's own ground truth,
+    because navani's Neware reader gets the time axis wrong. It rebuilds
+    ``Time`` as ``groupby("Step_Index")["Timestamp"].transform("first")`` plus
+    the per-step clock (``navani/neware.py:56-57``); ``Step_Index`` is the
+    protocol step *definition* number, which repeats every loop, so every
+    occurrence of a given step inherits the *first* cycle's base timestamp.
+    Within one step the origin is constant so per-row ``dt`` survives, but at
+    every step boundary the origin jumps — backwards jumps get clamped away
+    (deleting real elapsed time and real charge) and forwards jumps fabricate
+    both. Any capacity integrated against that axis inherits the error.
+
+    So instead:
+
+    - ``state`` / ``half cycle`` / ``full cycle`` come from the ``Status``
+      strings, so CV phases stay inside their parent half-cycle (navani maps
+      only CC steps and spawns a spurious half cycle at each CC↔CV boundary).
+    - ``Time`` comes from the absolute ``Timestamp`` — wall clock, monotonic
+      across steps and cycles. The raw per-step column is kept under navani's
+      name for it, ``Step Time / s``.
+    - ``Capacity`` comes from the cycler's own per-step ``Charge_Capacity`` /
+      ``Discharge_Capacity`` counters, stitched across step boundaries within
+      each half cycle — exact however sparsely the file was sampled. Falls
+      back to ∫|I|·dt when a file carries no counter columns.
+    """
+    df = _read_neware(path)
+    df = df.reset_index(drop=True)
+
+    if "Current(mA)" in df.columns:
+        df["Current"] = df["Current(mA)"]
+    if "Status" not in df.columns:
+        raise ValueError(f"Neware file has no Status column: {path}")
+    df["state"] = df["Status"].astype(str).map(_classify_neware_status)
+    _rebuild_cycles(df)
+
+    # Continuous time; keep the raw per-step column under navani's name for it.
+    if "Time" in df.columns:
+        df = df.rename(columns={"Time": "Step Time / s"})
+    elapsed = _continuous_time_s(df)
+    if elapsed is None:
+        raise ValueError(f"Neware file has no usable time column: {path}")
+    df["Time"] = elapsed
+
+    counter_cols = {"Charge_Capacity(mAh)", "Discharge_Capacity(mAh)"}
+    if counter_cols.issubset(df.columns):
+        combined = (
+            df["Charge_Capacity(mAh)"].astype(float)
+            + df["Discharge_Capacity(mAh)"].astype(float)
+        ).to_numpy()
+        capacity = np.zeros(len(df), dtype=float)
+        for hc, idx in df.groupby("half cycle").groups.items():
+            if hc == 0:
+                continue
+            pos = df.index.get_indexer(idx)
+            capacity[pos] = _accumulate_resets(combined[pos])
+        df["Capacity"] = capacity
+        _warn_if_capacity_units_look_wrong(df, path)
     else:
-        # Fallback: aggregate by full cycle. navani guarantees a "full cycle"
-        # column. Capacity is in mAh in navani's standard output.
-        g = (
-            raw_df.dropna(subset=["full cycle"])
-            .groupby("full cycle")
-            .agg(
-                Charge_mAh=("Capacity", lambda s: s[raw_df.loc[s.index, "state"].eq(1)].max()
-                            if "state" in raw_df.columns
-                            else s.max()),
-                Discharge_mAh=(
-                    "Capacity",
-                    lambda s: s[raw_df.loc[s.index, "state"].eq(0)].max()
-                    if "state" in raw_df.columns
-                    else s.max(),
-                ),
-            )
-            .reset_index()
-            .rename(columns={"full cycle": "cycle"})
-        )
-        out = g[["cycle", "Charge_mAh", "Discharge_mAh"]]
+        _integrate_capacity(df)
+    return df
 
+
+def _warn_if_capacity_units_look_wrong(df: pd.DataFrame, path: str | Path) -> None:
+    """Log when the counter column disagrees wildly with ∫|I|·dt.
+
+    navani carries an ``expected_capacity_unit`` knob because some Neware
+    machines write Ah into a column named ``(mAh)``. We read the counters at
+    face value, so a mislabelled machine would come out 1000x low with no other
+    signal. Comparing against the current integral catches that.
+    """
+    if not {"Current", "Time", "Capacity"}.issubset(df.columns):
+        return
+    dt = df["Time"].diff().fillna(0.0).clip(lower=0.0)
+    integrated = float(((df["Current"].abs() * dt) / 3600.0).sum())
+    counted = float(df["Capacity"].max())
+    if integrated <= 0 or counted <= 0:
+        return
+    ratio = integrated / counted
+    if ratio > 5.0 or ratio < 0.2:
+        logger.warning(
+            "%s: capacity counters (max %.4g mAh) disagree with the current "
+            "integral (%.4g mAh) by %.0fx — check the cycler's capacity units.",
+            path,
+            counted,
+            integrated,
+            max(ratio, 1 / ratio),
+        )
+
+
+def _load_via_navani(path: str | Path) -> pd.DataFrame:
+    """One non-Neware file through navani, plus Neware-shape normalisation for
+    Neware data that arrives re-exported (e.g. via Excel)."""
+    return _normalise_neware_state(ec.echem_file_loader(str(path)))
+
+
+def _load_one(path: str | Path) -> pd.DataFrame:
+    if str(path).lower().endswith(_NEWARE_EXTENSIONS):
+        return _load_neware(path)
+    return _load_via_navani(path)
+
+
+def _stitch(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    """Concatenate per-file frames into one continuous run.
+
+    Each input frame already carries correct per-file columns; stitching makes
+    ``Time`` continuous across the boundary (each file offset to start where
+    the previous ended), rebuilds half/full cycles globally from ``state`` (so
+    a half cycle spanning a file boundary merges instead of double-counting),
+    and re-offsets ``Capacity`` within each merged half (a continuing file's
+    capacity restarts at 0 — the same reset-absorption used for Neware's
+    per-step counters).
+
+    Note that idle time *between* files is not preserved: file ``n+1`` starts
+    where file ``n`` ended. For cycling analysis that is what you want; if a
+    calendar-ageing gap ever needs to survive, key the offset off the frames'
+    absolute ``Timestamp`` instead.
+    """
+    shifted = []
+    offset = 0.0
+    for f in frames:
+        f = f.copy()
+        if "Time" in f.columns and len(f):
+            t = pd.to_numeric(f["Time"], errors="coerce")
+            start = t.dropna().iloc[0] if t.notna().any() else 0.0
+            f["Time"] = t - start + offset
+            end = t.dropna().iloc[-1] if t.notna().any() else start
+            offset += float(end - start)
+        shifted.append(f)
+    df = pd.concat(shifted, ignore_index=True)
+
+    if "state" in df.columns:
+        _rebuild_cycles(df)
+        if "Capacity" in df.columns:
+            capacity = np.zeros(len(df), dtype=float)
+            cap_vals = pd.to_numeric(df["Capacity"], errors="coerce").to_numpy()
+            for hc, idx in df.groupby("half cycle").groups.items():
+                if hc == 0:
+                    continue
+                pos = df.index.get_indexer(idx)
+                capacity[pos] = _accumulate_resets(cap_vals[pos])
+            df["Capacity"] = capacity
+    return df
+
+
+def stitch_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    """Stitch already-loaded per-file frames into one continuous run.
+
+    The public entry point to ``_stitch`` for callers that parsed each file
+    separately and want to avoid re-reading them. A single frame passes
+    through unchanged; an empty list is a programming error.
+    """
+    if not frames:
+        raise ValueError("stitch_frames called with no frames")
+    return frames[0] if len(frames) == 1 else _stitch(frames)
+
+
+
+def cycle_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """Per-cycle summary DataFrame: ``cycle`` / ``Charge_mAh`` /
+    ``Discharge_mAh`` / ``Charge_Ah`` / ``Discharge_Ah`` / ``CE``.
+
+    A cycle's charge (discharge) capacity is the max ``Capacity`` reached on
+    its charge-state (discharge-state) rows — navani's convention, with
+    **charge = state 0 and discharge = state 1**. ``CE`` = discharge ÷ charge,
+    NaN when the cycle has no charge. Cycle 0 (rows before the first active
+    step) comes through with NaN capacities, matching navani's leading partial
+    cycle; callers drop it.
+
+    Deliberately does *not* call ``navani.echem.cycle_summary``: that function
+    writes ``full cycle`` back onto the frame it is handed
+    (``navani/echem.py:729``), flipping the column from int to float on the
+    caller's DataFrame — which the GUI keeps in its ``raw_data`` parse cache.
+    This implementation is pure.
+    """
+    df = raw_df
+    if "full cycle" not in df.columns:
+        if "half cycle" not in df.columns:
+            raise ValueError("DataFrame has neither 'half cycle' nor 'full cycle' columns")
+        full = np.ceil(pd.to_numeric(df["half cycle"]).to_numpy() / 2)
+    else:
+        full = pd.to_numeric(df["full cycle"], errors="coerce").to_numpy(dtype=float)
+
+    state = df["state"] if "state" in df.columns else pd.Series("R", index=df.index)
+    if "Capacity" in df.columns:
+        cap = pd.to_numeric(df["Capacity"], errors="coerce")
+    else:
+        cap = pd.Series(np.nan, index=df.index)
+
+    work = pd.DataFrame(
+        {
+            "cycle": full,
+            "cap": cap.to_numpy(),
+            "is_charge": (state == 0).to_numpy(),
+            "is_discharge": (state == 1).to_numpy(),
+        }
+    ).dropna(subset=["cycle"])
+    if work.empty:
+        raise ValueError("no cycles found in the data file")
+
+    rows = []
+    for cyc, seg in work.groupby("cycle", sort=True):
+        rows.append(
+            {
+                "cycle": int(cyc),
+                "Charge_mAh": seg.loc[seg["is_charge"], "cap"].max(),
+                "Discharge_mAh": seg.loc[seg["is_discharge"], "cap"].max(),
+            }
+        )
+    out = pd.DataFrame(rows, columns=["cycle", "Charge_mAh", "Discharge_mAh"])
     out["Charge_Ah"] = out["Charge_mAh"] / 1000.0
     out["Discharge_Ah"] = out["Discharge_mAh"] / 1000.0
     out["CE"] = (out["Discharge_mAh"] / out["Charge_mAh"]).where(out["Charge_mAh"] > 0)
-    out["cycle"] = out["cycle"].astype(int)
-    return out.reset_index(drop=True)
+    return out
 
 
 def filter_by_cycle(

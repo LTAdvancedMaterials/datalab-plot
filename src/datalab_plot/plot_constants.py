@@ -13,7 +13,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DEFAULT_URL = "https://datalab.lightningtree.ai/"
+# Pre-fills the GUI Connect modal when nothing else is known. Deliberately
+# empty: a datalab instance is site-specific, so a shipped default would
+# point every install at one team's server. Set DATALAB_URL to pre-fill.
+DEFAULT_URL = ""
 
 # Snapshot the .env / shell credentials at import time, BEFORE any in-app
 # Connect can mutate os.environ. The datalab_api client only reads the key

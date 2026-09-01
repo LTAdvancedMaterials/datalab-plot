@@ -79,19 +79,49 @@ series.py   DataFrames → render-agnostic plot series (NamedTuples)
   them silently.
 - Tests use **synthetic in-memory data only** (see `tests/conftest.py`). Do
   not commit real company data files.
-- **Neware `.nda` / `.ndax` data is post-processed.** `navani.neware.
-  neware_reader_nda` only classifies three of the 19 Neware `Status` values
-  (`Rest`, `CC_Chg`, `CC_DChg`); everything else (`CV_Chg`, `CCCV_Chg`,
-  `CP_Chg`, `CV_DChg`, `Pause`, `OCV`, …) becomes the categorical literal
-  `"unknown"`, which then reads as a distinct state in navani's half-cycle
-  diff and inflates the cycle count (each CC↔CV transition becomes a
-  spurious half cycle, shifting discharge halves onto the next cycle's
-  trace). `parsers.echem._normalise_neware_state` runs after every
-  `load_echem` call and re-derives `state` / `cycle change` / `half cycle`
-  / `full cycle` / `Capacity` from `Status`. No-op for non-Neware data. If
-  you ever rip out the post-processor, V-Q on Neware files will fragment
-  again. **Mixed multi-file loads:** when a Neware `.ndax` is stitched onto
-  another cycler's file (e.g. a Biologic `.mpr`) by
+- **Neware `.nda` / `.ndax` bypasses navani entirely.**
+  `parsers.echem._load_neware` reads the file directly with `NewareNDA` and
+  builds every derived column itself. Two independent navani defects make
+  this necessary:
+  1. *Wrong time axis.* `navani/neware.py:56-57` rebuilds `Time` as
+     `groupby("Step_Index")["Timestamp"].transform("first")` plus the
+     per-step clock. `Step_Index` is the protocol step *definition* number,
+     which repeats every loop, so every occurrence of a step inherits the
+     **first** cycle's base timestamp. Inside one step the origin is
+     constant so per-row `dt` survives; at each step *boundary* the origin
+     jumps — backwards jumps get clamped to zero (deleting real elapsed time
+     and real charge) and forwards jumps fabricate both. On the synthetic
+     two-cycle formation in `conftest.make_neware_raw_df` this reads
+     -5.4 % / +6.6 % on charge capacity, -9.3 % on cycle-2 CE, and collapses
+     3.59 h of elapsed time to 1.93 h. `Time` also comes out non-monotonic,
+     which silently pushed `series.cumulative_time_hours` onto its
+     clamped-diff fallback for every Neware file. Reported upstream as
+     [navani#62](https://github.com/be-smith/navani/issues/62).
+  2. *Missing states.* `navani.neware.neware_reader_nda` classifies only
+     three of the 19 Neware `Status` values (`Rest`, `CC_Chg`, `CC_DChg`);
+     everything else (`CV_Chg`, `CCCV_Chg`, `CP_Chg`, `CV_DChg`, `Pause`,
+     `OCV`, …) becomes the literal `"unknown"`, which reads as a distinct
+     state in the half-cycle diff and spawns a spurious half cycle at every
+     CC↔CV boundary.
+
+  So `_load_neware` takes `state` / `half cycle` / `full cycle` from
+  `Status`, `Time` from the absolute `Timestamp` (keeping the raw per-step
+  column as `Step Time / s`), and `Capacity` from the cycler's own
+  `Charge_Capacity` / `Discharge_Capacity` counters, reset-stitched per half
+  cycle by `_accumulate_resets`. It falls back to `_integrate_capacity`
+  (∫|I|·dt) only when a file carries no counters.
+  `_warn_if_capacity_units_look_wrong` guards the one assumption this adds —
+  some Neware machines write Ah into a column named `(mAh)`, which navani
+  handles with an `expected_capacity_unit` knob we don't have. Do not route
+  `.nda`/`.ndax` back through `ec.echem_file_loader`.
+- **`_normalise_neware_state` is now only for Neware data arriving through
+  navani's *other* readers** — an `.nda` re-exported via Excel, or a mixed
+  multi-file load. It re-derives `state` / `cycle change` / `half cycle` /
+  `full cycle` / `Capacity` from `Status`, and rebuilds the time axis **only
+  when every row is a Neware row**: in a mixed stack only the Neware rows
+  carry a `Timestamp`, so a global rewrite would write NaNs over the other
+  cycler's perfectly good `Time`. **Mixed multi-file loads:** when a Neware
+  `.ndax` is stitched onto another cycler's file (e.g. a Biologic `.mpr`) by
   `multi_echem_file_loader`, only the Neware rows carry a `Status`; the rest
   have `Status == NaN`. The post-processor reclassifies / re-integrates
   *only* the genuine Neware rows (`Status ∈ _NEWARE_STATUSES`) and preserves
@@ -100,6 +130,12 @@ series.py   DataFrames → render-agnostic plot series (NamedTuples)
   to reclassifying every row from `Status`: NaN maps to `"R"`, which silently
   drops the non-Neware cycles from cycle-summary / V-Q / dQ/dV while V-vs-t
   (which ignores `state`) still shows them.
+- **`cycle_summary` is ours, not navani's.** `navani.echem.cycle_summary`
+  writes `full cycle` back onto the frame it is handed
+  (`navani/echem.py:729`), flipping the column int → float on the caller's
+  DataFrame — which the GUI keeps in its `raw_data` parse cache. Ours is
+  pure. It also fixes the convention: **charge is `state == 0`, discharge is
+  `state == 1`**; the old fallback aggregation had them swapped.
 - **V-Q plots drop rest rows.** `series.voltage_capacity_series` filters
   `state == 'R'` before splitting half-cycles. Rest periods sit at constant
   Q while V relaxes, so plotting them draws vertical "OCV recovery" lines
@@ -595,7 +631,7 @@ Setup:
 uv sync --all-extras      # installs runtime + gui + picker + dev tools
 ```
 
-Run the full check loop before committing (there is no CI):
+Run the full check loop before committing:
 
 ```sh
 make check                # ruff lint + mypy + pytest  — must pass
@@ -604,6 +640,17 @@ make check                # ruff lint + mypy + pytest  — must pass
 Individual targets: `make lint`, `make types`, `make test`, `make fmt`
 (format), `make cov` (coverage). Raw equivalents: `uv run ruff check
 src tests`, `uv run mypy`, `uv run pytest`.
+
+GitHub Actions runs the same targets plus the Dash boot check on push and
+PR (`.github/workflows/ci.yml`). `make check` deliberately excludes `ruff
+format --check`, because most of the tree predates the formatter and a full
+reformat would bury real diffs. Format the lines you touch, not the files.
+
+`make drift` lists upstream commits touching the three backported modules
+since the last sync. See [SYNC.md](SYNC.md) for the divergences that are
+deliberate. It reads `sync.local.mk`, which is untracked: the upstream's
+location, paths and baseline commit are local configuration, not public
+facts.
 
 Run the app / CLI:
 
